@@ -308,7 +308,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         return self.value
 
     def getposition(self, data, clone=True):
-        position = self.ib.getposition(data.tradecontract, clone=clone)
+        position = self.ib.getposition(self._get_contract(data), clone=clone)
         logger.info(f"getposition: {position}")
         return position
 
@@ -341,14 +341,22 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             order.ocaGroup = self.orderbyid[order.oco.orderId].ocaGroup
 
         self.orderbyid[order.orderId] = order
-        self.ib.placeOrder(order.orderId, order.data.tradecontract, order)
+        self.ib.placeOrder(order.orderId, self._get_contract(order.data), order)
         self.notify(order)
 
         return order
 
+    def _get_contract(self, data):
+        if hasattr(data, "tradecontract"):
+            return data.tradecontract
+        else:
+            ib_data = self.ib.getdata(dataname=data._name)
+        return ib_data.precontract
+
+
     def getcommissioninfo(self, data):
         logger.info("getcommissioninfo()")
-        contract = data.tradecontract
+        contract = self._get_contract(data)
         try:
             mult = float(contract.multiplier)
         except (ValueError, TypeError):
