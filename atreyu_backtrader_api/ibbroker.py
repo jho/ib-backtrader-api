@@ -20,10 +20,12 @@
 ###############################################################################
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
+import logging
 
 import collections
 from copy import copy
 from datetime import date, datetime, timedelta
+import time
 import threading
 import uuid
 
@@ -45,7 +47,6 @@ from backtrader.comminfo import CommInfoBase
 
 bytes = bstr  # py2/3 need for ibpy
 
-import logging
 logger = logging.getLogger(__name__)
 
 class IBOrderState(object):
@@ -57,7 +58,7 @@ class IBOrderState(object):
     def __init__(self, orderstate):
         for f in self._fields:
             # fname = 'm_' + f
-            fname =  f
+            fname = f
             setattr(self, fname, getattr(orderstate, fname))
 
     def __str__(self):
@@ -210,6 +211,7 @@ class IBOrder(OrderBase, ibapi.order.Order):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+
 class IBCommInfo(CommInfoBase):
     '''
     Commissions are calculated by ib, but the trades calculations in the
@@ -284,13 +286,19 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
     def start(self):
         super(IBBroker, self).start()
         self.ib.start(broker=self)
+        retries = 0
+        while retries < 10 and not self.ib.connected():
+            time.sleep(.500)
+            logger.debug("Waiting for IB connection...")
+            retries = retries + 1
+        logger.debug("Connected to IB.  Starting broker..")
         if self.ib.connected():
             self.ib.reqAccountUpdates()
             self.startingcash = self.cash = self.ib.get_acc_cash()
             self.startingvalue = self.value = self.ib.get_acc_value()
+            self.ib.reqOpenOrders()
         else:
-            self.startingcash = self.cash = 0.0
-            self.startingvalue = self.value = 0.0
+            raise RuntimeError("Not connected to IB!")
 
     def stop(self):
         super(IBBroker, self).stop()
@@ -303,13 +311,21 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         return self.cash
 
     def getvalue(self, datas=None):
-        self.value = self.ib.get_acc_value()
-        logger.debug(f"getvalue: {self.value}")
-        return self.value
+        value = 0
+        if datas:
+            for d in datas:
+                position = self.getposition(d)
+                pos = position.size * position.price
+                value = value + pos
+        else:
+            self.value = self.ib.get_acc_value() 
+            value = self.value
+        logger.debug(f"getvalue({datas}): {value}")
+        return value
 
     def getposition(self, data, clone=True):
         position = self.ib.getposition(self._get_contract(data), clone=clone)
-        logger.info(f"getposition: {position}")
+        logger.info(f"getposition(${data._name}) = (size={position.size}, price={position.price}")
         return position
 
     def cancel(self, order):
@@ -341,7 +357,8 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             order.ocaGroup = self.orderbyid[order.oco.orderId].ocaGroup
 
         self.orderbyid[order.orderId] = order
-        self.ib.placeOrder(order.orderId, self._get_contract(order.data), order)
+        self.ib.placeOrder(
+            order.orderId, self._get_contract(order.data), order)
         self.notify(order)
 
         return order
@@ -350,9 +367,11 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         if hasattr(data, "tradecontract"):
             return data.tradecontract
         else:
-            ib_data = self.ib.getdata(dataname=data._name)
+            ib_data = self.ib.getdata(
+                dataname=data._name,
+                currency="USD",  # TODO: allow configuration/default?
+            )
         return ib_data.precontract
-
 
     def getcommissioninfo(self, data):
         logger.info("getcommissioninfo()")
@@ -371,7 +390,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
                    exectype=None, valid=None,
                    tradeid=0, **kwargs):
 
-        orderId=self.ib.nextOrderId()
+        orderId = self.ib.nextOrderId()
         order = IBOrder(action, owner=owner, data=data,
                         size=size, price=price, pricelimit=plimit,
                         exectype=exectype, valid=valid,
@@ -507,7 +526,8 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
                 size = ex.shares if ex.side[0] == 'B' else -ex.shares
                 price = ex.price
                 # use pseudoupdate and let the updateportfolio do the real update?
-                psize, pprice, opened, closed = position.update(float(size), price)
+                psize, pprice, opened, closed = position.update(
+                    float(size), price)
 
                 # split commission between closed and opened
                 comm = cr.commission
@@ -526,24 +546,26 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
 
                 # Use the actual time provided by the execution object
                 # The report from TWS is in actual local time, not the data's tz
-                #dt = date2num(datetime.strptime(ex.time, '%Y%m%d  %H:%M:%S'))
+                # dt = date2num(datetime.strptime(ex.time, '%Y%m%d  %H:%M:%S'))
                 dt_array = [] if ex.time == None else ex.time.split(" ")
                 if dt_array and len(dt_array) > 1:
-                  dt_array.pop()
-                  ex_time = " ".join(dt_array)
-                  dt = date2num(datetime.strptime(ex_time, '%Y%m%d %H:%M:%S'))
+                    dt_array.pop()
+                    ex_time = " ".join(dt_array)
+                    dt = date2num(datetime.strptime(
+                        ex_time, '%Y%m%d %H:%M:%S'))
                 else:
-                  dt = date2num(datetime.strptime(ex.time, '%Y%m%d %H:%M:%S %A'))
+                    dt = date2num(datetime.strptime(
+                        ex.time, '%Y%m%d %H:%M:%S %A'))
 
                 # Need to simulate a margin, but it plays no role, because it is
                 # controlled by a real broker. Let's set the price of the item
                 margin = order.data.close[0]
 
                 order.execute(dt, float(size), price,
-                            float(closed), closedvalue, closedcomm,
-                            opened, openedvalue, openedcomm,
-                            margin, pnl,
-                            float(psize), pprice)
+                              float(closed), closedvalue, closedcomm,
+                              opened, openedvalue, openedcomm,
+                              margin, pnl,
+                              float(psize), pprice)
 
                 if ostatus.status == self.FILLED:
                     order.completed()
@@ -598,6 +620,6 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
                 return  # no order or no id in error
 
             if msg.orderState.status in ['PendingCancel', 'Cancelled',
-                                           'Canceled']:
+                                         'Canceled']:
                 # This is most likely due to an expiration]
                 order._willexpire = True

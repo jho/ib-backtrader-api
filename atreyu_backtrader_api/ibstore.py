@@ -2062,6 +2062,13 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         self.conn.reqAccountUpdates(subscribe, bytes(account))
 
+    def reqOpenOrders(self):
+        '''Proxy to reqOpenOrders
+        '''
+
+        self.conn.reqOpenOrders()
+
+
     def accountDownloadEnd(self, accountName):
         # Signals the end of an account update
         # the event indicates it's over. It's only false once, and can be used
