@@ -720,7 +720,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             self.apiThread = threading.Thread(target=self.conn.run, daemon=True)
             self.apiThread.start()
         except Exception as e:
-            print(f"TWS Failed to connect: {e}")
+            logger.error(f"TWS Failed to connect: {e}")
 
         # This utility key function transforms a barsize into a:
         #   (Timeframe, Compression) tuple which can be sorted
@@ -833,7 +833,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         if retries >= 0:
             retries += firstconnect
 
-        while retries < 0 or retries:
+        while not self.conn.isConnected() and retries > 0:
             logger.debug(f"Retries: {retries}")
             if not firstconnect:
                 logger.debug(f"Reconnect in {self.p.timeout} secs")
@@ -917,12 +917,11 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         # actually be of interest to the user
         if msg.reqId > 0:
             logger.error(f"{msg}")
-            print(f"Error: {msg}")
         else:
             logger.debug(f"{msg}")
 
         if msg.reqId == -1 and msg.errorCode == 502:
-            print(msg.errorString)
+            logger.error(msg.errorString)
 
         if not self.p.notifyall:
             self.notifs.put((msg, tuple(vars(msg).values()), dict(vars(msg).items())))
@@ -1029,7 +1028,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         logger.debug(f"timeStamp: {timeStamp}")
 
     def connectAck(self):
-        logger.debug(f"connectAck")
+        logger.debug(f"connectAck: isConnected={self.conn.isConnected()}")
     
     def managedAccounts(self, accountsList):
         # 1st message in the stream
