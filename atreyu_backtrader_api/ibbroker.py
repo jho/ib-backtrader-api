@@ -320,7 +320,8 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         else:
             self.value = self.ib.get_acc_value() 
             value = self.value
-        logger.debug(f"getvalue({datas}): {value}")
+        datas = [] if datas is None else datas
+        logger.debug(f"getvalue({list(map(lambda x: x._name, datas))}): {value}")
         return value
 
     def getposition(self, data, clone=True):
@@ -451,6 +452,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         try:
             order = self.orderbyid[msg.orderId]
         except KeyError:
+            logger.warn(f"No order found for: {msg.orderId} (msg={msg})")
             return  # not found, it was not an order
 
         if msg.status == self.SUBMITTED and msg.filled == 0:

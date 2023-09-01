@@ -30,6 +30,7 @@ import itertools
 import random
 import threading
 import time
+import pprint
 
 from backtrader import TimeFrame, Position
 from backtrader.metabase import MetaParams
@@ -444,6 +445,7 @@ class IBApi(EWrapper, EClient):
         whyHeld:str - This field is used to identify an order held when TWS is trying to locate shares for a short sell. The value used to indicate this is 'locate'.
 
         """
+        logger.debug("orderStatus")
         self.cb.orderStatus(OrderStatusMsg(orderId , status, filled,
                                             remaining, avgFillPrice, permId,
                                             parentId, lastFillPrice, clientId,
@@ -840,7 +842,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             firstconnect = False
 
             try:
-                logger.debug("Connect (host={self.p.host}, port={self.p.port}, clientId={self.clientId})")
+                logger.debug(f"Connect (host={self.p.host}, port={self.p.port}, clientId={self.clientId})")
                 if self.conn.connect(self.p.host, self.p.port, self.clientId):
                     if not fromstart or resub:
                         self.startdatas()
@@ -2030,11 +2032,11 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             try:
                 if not self._event_accdownload.is_set():  # 1st event seen
                     position = Position(float(pos), float(avgCost))
-                    logger.debug(f"POSITIONS INITIAL: {self.positions}")
                     self.positions[contract.conId] = position
+                    logger.debug(f"POSITIONS INITIAL: {contract.symbol}={pprint.pformat(position)}")
                 else:
                     position = self.positions[contract.conId]
-                    logger.debug(f"POSITION UPDATE: {position}")
+                    logger.debug(f"POSITION UPDATE: {contract.symbol}={position}")
                     if not position.fix(float(pos), avgCost):
                         err = ('The current calculated position and '
                             'the position reported by the broker do not match. '
@@ -2090,12 +2092,11 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             try:
                 if not self._event_accdownload.is_set():  # 1st event seen
                     position = Position(float(pos), float(averageCost))
-                    logger.debug(f"POSITIONS INITIAL: {self.positions}")
-                    # self.positions[contract.conId] = position
-                    self.positions.setdefault(contract.conId, position)
+                    self.positions[contract.conId] = position
+                    logger.debug(f"POSITIONS INITIAL: {contract.symbol}={position}")
                 else:
                     position = self.positions[contract.conId]
-                    logger.debug(f"POSITION UPDATE: {position}")
+                    logger.debug(f"POSITION UPDATE: {contract.symbol}={position}")
                     if not position.fix(float(pos), averageCost):
                         err = ('The current calculated position and '
                             'the position reported by the broker do not match. '
