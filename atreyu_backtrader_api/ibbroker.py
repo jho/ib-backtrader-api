@@ -287,8 +287,8 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         super(IBBroker, self).start()
         self.ib.start(broker=self)
         retries = 0
-        while retries < 10 and not self.ib.connected():
-            time.sleep(.500)
+        while retries < self.ib.p.reconnect and not self.ib.connected():
+            time.sleep(1.0)
             logger.debug("Waiting for IB connection...")
             retries = retries + 1
         logger.debug("Connected to IB.  Starting broker..")
