@@ -291,8 +291,8 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             time.sleep(1.0)
             logger.debug("Waiting for IB connection...")
             retries = retries + 1
-        logger.debug("Connected to IB.  Starting broker..")
         if self.ib.connected():
+            logger.debug("Connected to IB.  Starting broker..")
             self.ib.reqAccountUpdates()
             self.startingcash = self.cash = self.ib.get_acc_cash()
             self.startingvalue = self.value = self.ib.get_acc_value()
