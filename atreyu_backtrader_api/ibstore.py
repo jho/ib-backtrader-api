@@ -706,7 +706,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         self.managed_accounts = list()  # received via managedAccounts
         self._running = True
         self._connecting = False
-        self.retries = 0
+        self._ready = threading.Event()
+        self.reconnects = 0
 
         self.notifs = queue.Queue()  # store notifications for cerebro
 
@@ -780,15 +781,21 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     
     def stop(self):
         self._running = False
-        try:
-            self.conn.disconnect()  # disconnect should be an invariant
-        except AttributeError:
-            pass    # conn may have never been connected and lack "disconnect"
-        self.apiThread.stop()
+        self._disconnect()
 
         # Unblock any calls set on these events
         self._event_managed_accounts.set()
         self._event_accdownload.set()
+
+    def _disconnect(self):
+        with self._lock_connect:
+            try:
+                self.conn.disconnect()  # disconnect should be an invariant
+            except AttributeError:
+                pass    # conn may have never been connected and lack "disconnect"
+            self._ready.clear()
+            #self.apiThread.stop()
+            #self.apiThread = None
     
     # @logibmsg
     def connected(self):
@@ -806,9 +813,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     # @logibmsg
     def reconnect(self, fromstart=False, resub=False):
         with self._lock_connect:
+            firstconnect = False
             if self._connecting: 
                 return False
-            firstconnect = False
             try:
                 if self.conn.isConnected():
                     if resub:
@@ -824,11 +831,16 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
             # This is only invoked from the main thread by datas and therefore no
             # lock is needed to control synchronicity to it
-            while not self.conn.isConnected() and self.retries < self.p.reconnect or self.p.reconnect == -1:
+            retries = 0
+            if self.reconnects > 0:
+                logger.info(f"Reconnecting... reconnects: {self.reconnects}")
+            else:
+                firstconnect = True
+                logger.info(f"Connecting...")
+            while not self.conn.isConnected() and retries < self.p.reconnect or self.p.reconnect == -1:
                 self._connecting = True
-                logger.debug(f"Reconnecting... retries: {self.retries}")
                 if not firstconnect:
-                    timeout = self.p.timeout * self.retries
+                    timeout = self.p.timeout * retries
                     logger.debug(f"Reconnect in {timeout} secs")
                     time.sleep(timeout)
 
@@ -837,29 +849,47 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                     self._event_managed_accounts.clear()
                     self._event_accdownload.clear()
                     self.conn.connect(self.p.host, self.p.port, self.clientId)
-                    self.apiThread = threading.Thread(target=self.conn.run, daemon=True)
-                    self.apiThread.start()
-                    logger.debug(f"Connected to (host={self.p.host}, port={self.p.port}, clientId={self.clientId})")
-                    while self.conn.isConnected() and not self.managed_accounts: 
-                        logger.debug("Waiting for account info...")
-                        self._event_managed_accounts.wait(timeout=0.5)
-                    logger.debug(f"Managed accounts: {self.managed_accounts}")
+                    if self.conn.isConnected():
+                        logger.debug(f"Connected to (host={self.p.host}, port={self.p.port}, clientId={self.clientId})")
+                        self.apiThread = threading.Thread(target=self.conn.run, name=f"IBKR api - {self.reconnects}", daemon=True)
+                        self.apiThread.start()
+                        logger.debug(f"Active threads: {threading.active_count()} (threads = {threading.enumerate()})")
 
-                    self.reqAccountUpdates()
-                    while self.conn.isConnected() and not self._event_accdownload.is_set():
-                        logger.debug("Waiting for account download...")
-                        self._event_accdownload.wait(timeout=0.5)
+                        #self.conn.reqManagedAccts()
 
-                    #self.reqAccountUpdates()
-                    if not fromstart or resub:
-                        self.startdatas()
+                        attempts = 0
+                        while not self._ready.is_set() and attempts < 10:
+                            logger.debug("Waiting for connection ready...")
+                            self._ready.wait(timeout=0.5 * attempts)
+                            attempts += 1
 
+                        attempts = 0
+                        while len(self.managed_accounts) == 0 and attempts < 10 and self.conn.isConnected(): 
+                            logger.debug("Waiting for account info...")
+                            self._event_managed_accounts.wait(timeout=0.5 * attempts)
+                            attempts += 1
+
+                        if len(self.managed_accounts) > 0:
+                            logger.debug(f"Managed accounts: {self.managed_accounts}")
+                            account = self.managed_accounts[0]
+                            logger.debug(f"Requesting account updates for: {account}")
+                            while not self._event_accdownload.is_set() and self.conn.isConnected():
+                                self.conn.reqAccountUpdates(True, account)
+                                logger.debug("Waiting for account download...")
+                                self._event_accdownload.wait(timeout=0.5) 
+                        else:
+                            self._disconnect()
+                    self._connecting = False 
+                    
                 except Exception as e:
                     logger.exception(f"Failed to Connect {e}")
 
-                self.retries += 1
+                retries += 1
 
-            self._connecting = False 
+            if not fromstart or resub:
+                self.startdatas()
+
+            self.reconnects += 1
             return self.conn.isConnected()  
 
     
@@ -969,16 +999,16 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                 q.put(-msg.errorCode)
 
         elif msg.errorCode == 326:  # not recoverable, clientId in use
-            self.dontreconnect = True
-            self.conn.disconnect()
             self.stopdatas()
+            self.dontreconnect = True
+            self._disconnect()
 
         elif msg.errorCode == 502:
             # Cannot connect to TWS: port, config not open, tws off (504 then)
-            self.conn.disconnect()
-            if self._running:
+            if not self._connecting and self._running:
+                self.stopdatas()
+                self._disconnect()
                 self.reconnect()
-            self.stopdatas()
 
         elif msg.errorCode == 504:  # Not Connected for data op
             # Once for each data
@@ -988,13 +1018,14 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             # with no messages arriving
             for q in self.ts:  # key: queue -> ticker
                 q.put(-msg.errorCode)
-            if self._running:
+            if not self._connecting and self._running:
+                self._disconnect()
                 self.reconnect()
 
         elif msg.errorCode == 1300:
             # TWS has been closed. The port for a new connection is there
             # newport = int(msg.errorMsg.split('-')[-1])  # bla bla bla -7496
-            self.conn.disconnect()
+            self._disconnect()
             self.stopdatas()
 
         elif msg.errorCode == 1100:
@@ -1030,7 +1061,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         # Sometmes this comes without 1300/502 or any other and will not be
         # seen in error hence the need to manage the situation independently
         logger.warn("Connection closed!")
-        if self._running:
+        if not self._connecting and self._running:
             self.reconnect()
     
     def updateAccountTime(self, timeStamp):
@@ -1045,9 +1076,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
     
     def managedAccounts(self, accountsList):
-        logger.debug(f"Managed accounts: {accountsList}")
         # 1st message in the stream
         self.managed_accounts = accountsList.split(',')
+        logger.debug(f"Received managed accounts list: {self.managed_accounts}")
         self._event_managed_accounts.set()
 
         # Request time to avoid synchronization issues
@@ -1076,6 +1107,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
     def nextValidId(self, orderId):
         # Create a counter from the TWS notified value to apply to orders
+        self._ready.set()
         self.orderid = itertools.count(orderId)
 
     def nextOrderId(self):
@@ -2066,20 +2098,6 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     def positionEnd(self):
         logger.debug(f"positionEnd")
 
-    def reqAccountUpdates(self, subscribe=True, account=None):
-        '''Proxy to reqAccountUpdates
-
-        If ``account`` is ``None``, wait for the ``managedAccounts`` message to
-        set the account codes
-        '''
-        while account is None:
-            if not self.conn.isConnected():
-                self.reconnect()
-            self._event_managed_accounts.wait(timeout=0.5)
-            if len(self.managed_accounts) > 0:
-                account = self.managed_accounts[0]
-
-        self.conn.reqAccountUpdates(subscribe, bytes(account))
 
     def reqOpenOrders(self):
         '''Proxy to reqOpenOrders
