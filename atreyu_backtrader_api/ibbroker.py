@@ -282,10 +282,10 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         self.ordstatus = collections.defaultdict(dict)
         self.notifs = queue.Queue()  # holds orders which are notified
         self.tonotify = collections.deque()  # hold oids to be notified
+        self.ib.start(broker=self)
 
     def start(self):
         super(IBBroker, self).start()
-        self.ib.start(broker=self)
         retries = 0
         while retries < self.ib.p.reconnect and not self.ib.connected():
             self.ib.reconnect()

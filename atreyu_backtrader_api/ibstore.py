@@ -722,7 +722,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         # ibpy connection object
         try:           
             self.conn = IBApi(self, self._debug)
-            self.reconnect()
+            #self.reconnect()
         except Exception as e:
             logger.error(f"TWS Failed to connect: {e}")
 
@@ -759,6 +759,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     @logibmsg
     def start(self, data=None, broker=None):
         logger.info(f"START data: {data} broker: {broker}")
+        if self.broker is None:
+            self.broker = broker
         self.reconnect(fromstart=True)  # reconnect should be an invariant
 
         # Datas require some processing to kickstart data reception
