@@ -595,7 +595,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         Set it to a ``-1`` value to keep on reconnecting forever
 
-      - ``timeout`` (default: ``3.0``)
+      - ``connection_timeout`` (default: ``1.0``)
 
         Time in seconds between reconnection attemps
 
@@ -639,7 +639,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         ('notifyall', False),
         ('_debug', False),
         ('reconnect', 3),  # -1 forever, 0 No, > 0 number of retries
-        ('timeout', 1.0),  # timeout between reconnections
+        ('connection_timeout', 1.0),  # timeout between reconnections
+        ('timeout', 15.0),  # timeout on operations
         ('timeoffset', True),  # Use offset to server for timestamps if needed
         ('timerefresh', 60.0),  # How often to refresh the timeoffset
         ('indcash', True),  # Treat IND codes as CASH elements
@@ -787,6 +788,12 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         self._event_managed_accounts.set()
         self._event_accdownload.set()
 
+    def _await_ready(self):
+        self._ready.wait(self.p.timeout)
+        if not self._ready.is_set():
+            raise TimeoutError("Timeout waiting for broker ready!")
+
+
     def _disconnect(self):
         with self._lock_connect:
             try:
@@ -839,9 +846,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                 logger.info(f"Connecting...")
             while not self.conn.isConnected() and retries < self.p.reconnect or self.p.reconnect == -1:
                 self._connecting = True
-                if not firstconnect:
+                if not firstconnect and retries > 0:
                     timeout = self.p.timeout * retries
-                    logger.debug(f"Reconnect in {timeout} secs")
+                    logger.info(f"Retrying in {timeout} secs")
                     time.sleep(timeout)
 
                 firstconnect = False
@@ -850,21 +857,14 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                     self._event_accdownload.clear()
                     self.conn.connect(self.p.host, self.p.port, self.clientId)
                     if self.conn.isConnected():
-                        logger.debug(f"Connected to (host={self.p.host}, port={self.p.port}, clientId={self.clientId})")
+                        logger.info(f"Connected to (host={self.p.host}, port={self.p.port}, clientId={self.clientId})")
                         self.apiThread = threading.Thread(target=self.conn.run, name=f"IBKR api - {self.reconnects}", daemon=True)
                         self.apiThread.start()
                         logger.debug(f"Active threads: {threading.active_count()} (threads = {threading.enumerate()})")
 
                         #self.conn.reqManagedAccts()
-
                         attempts = 0
-                        while not self._ready.is_set() and attempts < 10:
-                            logger.debug("Waiting for connection ready...")
-                            self._ready.wait(timeout=0.5 * attempts)
-                            attempts += 1
-
-                        attempts = 0
-                        while len(self.managed_accounts) == 0 and attempts < 10 and self.conn.isConnected(): 
+                        while attempts < 10 and self.conn.isConnected() and not self._event_managed_accounts.is_set() and len(self.managed_accounts) == 0:
                             logger.debug("Waiting for account info...")
                             self._event_managed_accounts.wait(timeout=0.5 * attempts)
                             attempts += 1
@@ -877,6 +877,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                                 self.conn.reqAccountUpdates(True, account)
                                 logger.debug("Waiting for account download...")
                                 self._event_accdownload.wait(timeout=0.5) 
+
+                            self._ready.set()
                         else:
                             self._disconnect()
                     self._connecting = False 
@@ -1107,7 +1109,6 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
     def nextValidId(self, orderId):
         # Create a counter from the TWS notified value to apply to orders
-        self._ready.set()
         self.orderid = itertools.count(orderId)
 
     def nextOrderId(self):
@@ -2102,7 +2103,6 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     def reqOpenOrders(self):
         '''Proxy to reqOpenOrders
         '''
-
         self.conn.reqOpenOrders()
 
 
@@ -2173,7 +2173,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                 self.acc_value[accountName] = value
             elif key == 'CashBalance' and currency == 'BASE':
                 self.acc_cash[accountName] = value
-    
+
     @logibmsg
     def get_acc_values(self, account=None):
         '''Returns all account value infos sent by TWS during regular updates
@@ -2185,17 +2185,10 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         If account is specified or the system has only 1 account the dictionary
         corresponding to that account is returned
         '''
-        # Wait for at least 1 account update download to have been finished
-        # before the account infos can be returned to the calling client
-        # if self.connected():
-        #     self._event_accdownload.wait()
+        self._await_ready()
         # Lock access to acc_cash to avoid an event intefering
         with self._updacclock:
             if account is None:
-                # wait for the managedAccount Messages
-                # if self.connected():
-                #     self._event_managed_accounts.wait()
-
                 if not self.managed_accounts:
                     return self.acc_upds.copy()
 
@@ -2223,14 +2216,11 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         If account is specified or the system has only 1 account the dictionary
         corresponding to that account is returned
         '''
-        # Wait for at least 1 account update download to have been finished
-        # before the value can be returned to the calling client
-        # Lock access to acc_cash to avoid an event intefering
-
+        self._await_ready()
         with self._updacclock:
             if account is None:
                 if not self.managed_accounts:
-                    return float()
+                    return float('nan')
                 elif len(self.managed_accounts) > 1:
                     return sum(self.acc_value.values())
 
@@ -2242,7 +2232,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             except KeyError:
                 pass
 
-        return float()
+            return float('nan')
 
     @logibmsg
     def get_acc_cash(self, account=None):
@@ -2255,19 +2245,12 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         If account is specified or the system has only 1 account the dictionary
         corresponding to that account is returned
         '''
-        # Wait for at least 1 account update download to have been finished
-        # before the cash can be returned to the calling client
-        # if self.connected():
-        #     self._event_accdownload.wait()
+        self._await_ready()
         # Lock access to acc_cash to avoid an event intefering
         with self._lock_accupd:
             if account is None:
-                # # wait for the managedAccount Messages
-                # if self.connected():
-                #     self._event_managed_accounts.wait()
-
-                if not self.managed_accounts:
-                    return float()
+                if len(self.managed_accounts) == 0:
+                    return float('nan')
 
                 elif len(self.managed_accounts) > 1:
                     return sum(self.acc_cash.values())
@@ -2278,3 +2261,5 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                 return self.acc_cash[account]
             except KeyError:
                 pass
+
+            return float('nan')
