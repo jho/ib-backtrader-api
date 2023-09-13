@@ -362,28 +362,15 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
 
         self.orderbyid[order.orderId] = order
         self.ib.placeOrder(
-            order.orderId, self._get_contract(order.data), order)
+            order.orderId, self.ib.get_contract(order.data), order)
         self.notify(order)
 
         return order
 
-    def _get_contract(self, data):
-        res = None 
-        logger.debug(f"_get_contract({data._name})")
-        if hasattr(data, "tradecontract"):
-            res = data.tradecontract
-        else:
-            ib_data = self.ib.getdata(
-                dataname=data._name,
-                currency="USD",  # TODO: allow configuration/default?
-            )
-            res = ib_data.tradecontract
-        logger.debug(f"_get_contract({data._name}) = {res}")
-        return res
 
     def getcommissioninfo(self, data):
         logger.info("getcommissioninfo()")
-        contract = self._get_contract(data)
+        contract = self.ib.get_contract(data)
         try:
             mult = float(contract.multiplier)
         except (ValueError, TypeError):
@@ -436,10 +423,13 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
 
     def notify(self, order):
         self.notifs.put(order.clone())
+        logger.debug(f"Notifications: {self.notifs.qsize()}")
 
     def get_notification(self):
         try:
-            return self.notifs.get(False)
+            res = self.notifs.get(False)
+            logger.debug(f"Emitting notification: {res}")
+            return res
         except queue.Empty:
             pass
 
@@ -602,9 +592,10 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
     def push_ordererror(self, msg):
         with self._lock_orders:
             try:
-                order = self.orderbyid[msg.id]
-            except (KeyError, AttributeError):
+                order = self.orderbyid[msg.orderId]
+            except KeyError:
                 self.orderbyid[msg.id] = msg.order
+            except AttributeError:
                 return  # no order or no id in error
 
             if msg.errorCode == 202:
@@ -627,7 +618,9 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         with self._lock_orders:
             try:
                 order = self.orderbyid[msg.orderId]
-            except (KeyError, AttributeError):
+            except KeyError:
+                self.orderbyid[msg.id] = msg.order
+            except AttributeError:
                 self.orderbyid[msg.orderId] = msg.order
                 return  # no order or no id in error
 

@@ -30,7 +30,9 @@ import itertools
 import random
 import threading
 import time
-import pprint
+import signal
+import sys
+import traceback
 
 from backtrader import TimeFrame, Position
 from backtrader.metabase import MetaParams
@@ -444,7 +446,6 @@ class IBApi(EWrapper, EClient):
         whyHeld:str - This field is used to identify an order held when TWS is trying to locate shares for a short sell. The value used to indicate this is 'locate'.
 
         """
-        logger.debug("orderStatus")
         self.cb.orderStatus(OrderStatusMsg(orderId , status, filled,
                                             remaining, avgFillPrice, permId,
                                             parentId, lastFillPrice, clientId,
@@ -649,7 +650,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     @classmethod
     def getdata(cls, *args, **kwargs):
         '''Returns ``DataCls`` with args, kwargs'''
-        return cls.DataCls(*args, **kwargs)
+        res = cls.DataCls(*args, **kwargs)
+        logger.debug(f"Creating data: {args} {kwargs}")
+        return res
 
     @classmethod
     def getbroker(cls, *args, **kwargs):
@@ -658,6 +661,26 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     
     def __init__(self):
         super(IBStore, self).__init__()
+
+        og_signal_handler = signal.getsignal(signal.SIGINT)
+        def signal_handler(sig, frame):
+            logger.warning("SIGNIT! Shutting down EReader thread!")
+            self.dontreconnect = True
+            self._disconnect()
+            logger.debug(f"Active threads: {threading.active_count()} (threads = {threading.enumerate()})")
+            og_signal_handler(sig, frame)
+
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+
+        def except_hook(exctype, value, traceback):
+            if exctype == SystemExit:
+                logger.warning("SystemExit!")
+                self.dontreconnect = True
+                self._disconnect()
+            sys.__excepthook__(exctype, value, traceback)
+        #sys.excepthook = except_hook
+        #threading.excepthook = except_hook
 
         self._lock_q = threading.Lock()  # sync access to _tickerId/Queues
         self._lock_accupd = threading.Lock()  # sync account updates
@@ -683,6 +706,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         self.qs = collections.OrderedDict()  # key: tickerId -> queues
         self.ts = collections.OrderedDict()  # key: queue -> tickerId
         self.iscash = dict()  # tickerIds from cash products (for ex: EUR.JPY)
+
+        self._contracts = dict()  # contracts we've looked up
 
         self.apiThread = None
 
@@ -785,6 +810,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     
     def stop(self):
         self._running = False
+        self.dontreconnect = True
         self._disconnect()
 
         # Unblock any calls set on these events
@@ -1179,6 +1205,24 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             return None
 
         return cds
+
+    def get_contract(self, data):
+        res = None 
+        logger.debug(f"get_contract({data._name})")
+        if data._name in self._contracts:
+            res = self._contracts[data._name]
+        else:
+            if hasattr(data, "tradecontract"):
+                res = data.tradecontract
+            else:
+                ib_data = self.getdata(
+                    dataname=data._name,
+                    currency="USD",  # TODO: allow configuration/default?
+                )
+                ib_data._populate_contract()
+                res = ib_data.tradecontract
+        logger.debug(f"get_contract({data._name}) = {res}")
+        return res
     
     def reqContractDetails(self, contract):
         # get a ticker/queue for identification/data delivery
@@ -2064,6 +2108,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     
     def orderStatus(self, msg):
         '''Receive the event ``orderStatus``'''
+        logger.debug(f"Got order status: {msg}")
         self.broker.push_orderstatus(msg)
     
     def commissionReport(self, commissionReport):
