@@ -697,7 +697,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         self.port_update = False  # indicate whether to signal to broker
 
-        self.positions = collections.defaultdict(Position)  # actual positions
+        self.positions_by_contract = collections.defaultdict(Position)  # actual positions
+        self.positions_by_symbol = collections.defaultdict(Position)  # actual positions
 
         self._tickerId = itertools.count(self.REQIDBASE)  # unique tickerIds
         self.orderid = None  # next possible orderid (will be itertools.count)
@@ -2081,11 +2082,12 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             try:
                 if not self._event_accdownload.is_set():  # 1st event seen
                     position = Position(float(pos), float(avgCost))
-                    self.positions[contract.conId] = position
-                    logger.debug(f"POSITIONS INITIAL: {contract.symbol}={pprint.pformat(position)}")
+                    self.positions_by_contract[contract.conId] = position
+                    self.positions_by_symbol[contract.symbol] = position
+                    logger.debug(f"POSITIONS INITIAL: {contract.symbol}:{contract.conId}={position}")
                 else:
-                    position = self.positions[contract.conId]
-                    logger.debug(f"POSITION UPDATE: {contract.symbol}={position}")
+                    position = self.positions_by_contract[contract.conId]
+                    logger.debug(f"POSITION UPDATE: {contract.symbol}:{contract.conId}={position}")
                     if not position.fix(float(pos), avgCost):
                         err = ('The current calculated position and '
                             'the position reported by the broker do not match. '
@@ -2123,36 +2125,17 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                         marketPrice, marketValue,
                         averageCost, unrealizedPNL,
                         realizedPNL, accountName):
-        # Lock access to the position dicts. This is called in sub-thread and
-        # can kick in at any time
-        with self._lock_pos:
-            try:
-                if not self._event_accdownload.is_set():  # 1st event seen
-                    position = Position(float(pos), float(averageCost))
-                    self.positions[contract.conId] = position
-                    logger.debug(f"POSITIONS INITIAL: {contract.symbol}={position}")
-                else:
-                    position = self.positions[contract.conId]
-                    logger.debug(f"POSITION UPDATE: {contract.symbol}={position}")
-                    if not position.fix(float(pos), averageCost):
-                        err = ('The current calculated position and '
-                            'the position reported by the broker do not match. '
-                            'Operation can continue, but the trades '
-                            'calculated in the strategy may be wrong')
+        self.position(None, contract, pos, averageCost)
+        self.broker.push_portupdate()
 
-                        self.notifs.put((err, (), {}))
-
-                    # Flag signal to broker at the end of account download
-                    # self.port_update = True
-                    self.broker.push_portupdate()
-            except Exception as e:
-                logger.exception(f"Exception: {e}")
-
-    def getposition(self, contract, clone=False):
+    def getposition(self, contractOrSymbol, clone=False):
         # Lock access to the position dicts. This is called from main thread
         # and updates could be happening in the background
         with self._lock_pos:
-            position = self.positions[contract.conId]
+            if  hasattr(contractOrSymbol, "conId"):
+                position = self.positions_by_contract[contractOrSymbol.conId]
+            else:
+                position = self.positions_by_symbol[contractOrSymbol]
             if clone:
                 return copy(position)
 

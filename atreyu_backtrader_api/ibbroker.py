@@ -328,13 +328,13 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         return value
 
     def getposition(self, data, clone=True):
-        position = self.ib.getposition(self._get_contract(data), clone=clone)
-        logger.info(f"getposition(${data._name}) = (size={position.size}, price={position.price}")
+        position = self.ib.getposition(data._name, clone=clone)
+        logger.info(f"getposition({data._name}) = (size={position.size}, price={position.price})")
         return position
 
     def cancel(self, order):
         try:
-            o = self.orderbyid[order.orderId]
+            order = self.orderbyid[order.orderId]
         except (ValueError, KeyError):
             return  # not found ... not cancellable
 
@@ -368,14 +368,18 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         return order
 
     def _get_contract(self, data):
+        res = None 
+        logger.debug(f"_get_contract({data._name})")
         if hasattr(data, "tradecontract"):
-            return data.tradecontract
+            res = data.tradecontract
         else:
             ib_data = self.ib.getdata(
                 dataname=data._name,
                 currency="USD",  # TODO: allow configuration/default?
             )
-        return ib_data.precontract
+            res = ib_data.tradecontract
+        logger.debug(f"_get_contract({data._name}) = {res}")
+        return res
 
     def getcommissioninfo(self, data):
         logger.info("getcommissioninfo()")
@@ -456,6 +460,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             order = self.orderbyid[msg.orderId]
         except KeyError:
             logger.warn(f"No order found for: {msg.orderId} (msg={msg})")
+            self.orderbyid[msg.orderId] = msg.order
             return  # not found, it was not an order
 
         if msg.status == self.SUBMITTED and msg.filled == 0:
@@ -599,6 +604,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             try:
                 order = self.orderbyid[msg.id]
             except (KeyError, AttributeError):
+                self.orderbyid[msg.id] = msg.order
                 return  # no order or no id in error
 
             if msg.errorCode == 202:
@@ -622,6 +628,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             try:
                 order = self.orderbyid[msg.orderId]
             except (KeyError, AttributeError):
+                self.orderbyid[msg.orderId] = msg.order
                 return  # no order or no id in error
 
             if msg.orderState.status in ['PendingCancel', 'Cancelled',
