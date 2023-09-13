@@ -830,8 +830,6 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             except AttributeError:
                 pass    # conn may have never been connected and lack "disconnect"
             self._ready.clear()
-            #self.apiThread.stop()
-            #self.apiThread = None
     
     # @logibmsg
     def connected(self):
@@ -1221,6 +1219,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                 )
                 ib_data._populate_contract()
                 res = ib_data.tradecontract
+            self._contracts[data._name] = res
         logger.debug(f"get_contract({data._name}) = {res}")
         return res
     
