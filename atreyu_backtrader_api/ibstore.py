@@ -804,9 +804,6 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             # datas to try to reconnect or else bail out
             return self.getTickerQueue(start=True)
 
-        elif broker is not None:
-            self.broker = broker
-
     
     def stop(self):
         self._running = False
@@ -2107,7 +2104,6 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     
     def orderStatus(self, msg):
         '''Receive the event ``orderStatus``'''
-        logger.debug(f"Got order status: {msg}")
         self.broker.push_orderstatus(msg)
     
     def commissionReport(self, commissionReport):

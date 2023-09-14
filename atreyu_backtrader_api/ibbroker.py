@@ -125,6 +125,50 @@ class IBOrder(OrderBase, ibapi.order.Order):
         Order.StopTrailLimit: bytes('TRAIL LIMIT'),
     }
 
+    _BTOrderTypes = {
+        bytes('MKT'): Order.Market,
+        bytes('LMT'): Order.Limit,
+        bytes('MOC'): Order.Close,
+        bytes('STP'): Order.Stop,
+        bytes('STPLMT'): Order.StopLimit,
+        bytes('TRAIL'): Order.StopTrail,
+        bytes('TRAIL LIMIT'): Order.StopTrailLimit,
+    }
+
+    @classmethod
+    def from_ib_order(cls, owner, data, order):
+        exectype = cls._BTOrderTypes[order.orderType]
+        price = 0 if len(data.close) <= 0 else data.close[0] #this is probably wrong
+        plimit = 0
+        match exectype:
+            case Order.Stop:
+                price = order.auxPrice
+            case Order.Limit:
+                plimit = order.priceLmt
+                price = order.auxPrice
+            case Order.StopLimit:
+                price = order.auxPrice
+                plimit = order.lmtPrice
+            case Order.Close | Order.Market:
+                pass
+            case _:
+                raise NotImplementedError(f"TODO: {exectype}")
+
+        order = cls(order.action, 
+                        owner=owner, 
+                        data=data,
+                        size=order.totalQuantity, 
+                        price=price, 
+                        pricelimit=plimit,
+                        exectype=exectype, 
+                        valid=None, #TODO
+                        tradeid=None, #TODO
+                        simulated=True,
+                        #clientId=self.ib.clientId,
+                        orderId=order.orderId
+        )
+        return order
+
     def __init__(self, action, **kwargs):
 
         # Marker to indicate an openOrder has been seen with
@@ -147,6 +191,7 @@ class IBOrder(OrderBase, ibapi.order.Order):
         # Set the prices
         self.lmtPrice = 0.0
         self.auxPrice = 0.0
+        self.id = self.orderId
 
         if self.exectype == self.Market:  # is it really needed for Market?
             pass
@@ -282,6 +327,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         self.ordstatus = collections.defaultdict(dict)
         self.notifs = queue.Queue()  # holds orders which are notified
         self.tonotify = collections.deque()  # hold oids to be notified
+        self.cerebro = None
         self.ib.start(broker=self)
 
     def start(self):
@@ -310,7 +356,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
     def getcash(self):
         # This call cannot block if no answer is available from ib
         self.cash = self.ib.get_acc_cash()
-        logger.debug(f"get_acc_cash: {self.cash}")
+        #logger.debug(f"get_acc_cash: {self.cash}")
         return self.cash
 
     def getvalue(self, datas=None):
@@ -324,12 +370,12 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             self.value = self.ib.get_acc_value() 
             value = self.value
         datas = [] if datas is None else datas
-        logger.debug(f"getvalue({list(map(lambda x: x._name, datas))}): {value}")
+        #logger.debug(f"getvalue({list(map(lambda x: x._name, datas))}): {value}")
         return value
 
     def getposition(self, data, clone=True):
         position = self.ib.getposition(data._name, clone=clone)
-        logger.info(f"getposition({data._name}) = (size={position.size}, price={position.price})")
+        #logger.debug(f"getposition({data._name}) = (size={position.size}, price={position.price})")
         return position
 
     def cancel(self, order):
@@ -422,18 +468,22 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         return self.submit(order)
 
     def notify(self, order):
+        logger.debug(f"Adding notification: {order} (size={self.notifs.qsize()})")
         self.notifs.put(order.clone())
-        logger.debug(f"Notifications: {self.notifs.qsize()}")
 
     def get_notification(self):
         try:
             res = self.notifs.get(False)
-            logger.debug(f"Emitting notification: {res}")
+            if res:
+                logger.debug(f"Retrived notification: {res} (size={self.notifs.qsize()})")
             return res
         except queue.Empty:
             pass
 
         return None
+    
+    def _addnotification(self, order, quicknotify=False):
+        self.notifs.put(order)
 
     def next(self):
         self.notifs.put(None)  # mark notificatino boundary
@@ -450,7 +500,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             order = self.orderbyid[msg.orderId]
         except KeyError:
             logger.warn(f"No order found for: {msg.orderId} (msg={msg})")
-            self.orderbyid[msg.orderId] = msg.order
+            #self.orderbyid[msg.orderId] = msg.order
             return  # not found, it was not an order
 
         if msg.status == self.SUBMITTED and msg.filled == 0:
@@ -461,10 +511,6 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             self.notify(order)
 
         elif msg.status == self.CANCELLED:
-            # duplicate detection
-            if order.status in [order.Cancelled, order.Expired]:
-                return
-
             if order._willexpire:
                 # An openOrder has been seen with PendingCancel/Cancelled
                 # and this happens when an order expires
@@ -507,6 +553,14 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             # "filled"
             if msg.filled:
                 self.ordstatus[msg.orderId][msg.filled] = msg
+        elif msg.status in [self.FILLED]:
+            # According to the docs, these statuses can only be set by the
+            # programmer but the demo account sent it back at random times with
+            # "filled"
+            if msg.filled and msg.remaining == 0.0:
+                order.complete(self)
+                self.notify(order)
+
         else:  # Unknown status ...
             pass
 
@@ -587,14 +641,14 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             while self.tonotify:
                 oid = self.tonotify.popleft()
                 order = self.orderbyid[oid]
-                self.notify(order)
+                self.notify(order.clone())
 
     def push_ordererror(self, msg):
         with self._lock_orders:
             try:
                 order = self.orderbyid[msg.orderId]
             except KeyError:
-                self.orderbyid[msg.id] = msg.order
+                self.orderbyid[msg.orderId] = msg.order
             except AttributeError:
                 return  # no order or no id in error
 
@@ -614,14 +668,18 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             self.notify(order)
 
     def push_orderstate(self, msg):
-
         with self._lock_orders:
             try:
                 order = self.orderbyid[msg.orderId]
             except KeyError:
-                self.orderbyid[msg.id] = msg.order
-            except AttributeError:
-                self.orderbyid[msg.orderId] = msg.order
+                if self.cerebro and msg.contract.symbol in self.cerebro.datasbyname:
+                    data = self.cerebro.datasbyname[msg.contract.symbol]
+                    order = IBOrder.from_ib_order(self, data, msg.order)
+                    logger.debug(f"Handling existing open order: {msg.orderId} -> {order}")
+                    self.orderbyid[msg.orderId] = order
+                    self.notify(order.clone())
+                else:
+                    logger.warn(f"Could not find data '{msg.contract.symbol}' for open order: {msg.orderId}")
                 return  # no order or no id in error
 
             if msg.orderState.status in ['PendingCancel', 'Cancelled',
