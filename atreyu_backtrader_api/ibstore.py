@@ -871,7 +871,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             while not self.conn.isConnected() and retries < self.p.reconnect or self.p.reconnect == -1:
                 self._connecting = True
                 if not firstconnect and retries > 0:
-                    timeout = self.p.timeout * retries
+                    timeout = self.p.connection_timeout * retries
                     logger.info(f"Retrying in {timeout} secs")
                     time.sleep(timeout)
 
