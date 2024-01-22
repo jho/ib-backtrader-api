@@ -332,19 +332,14 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
 
     def start(self):
         super(IBBroker, self).start()
-        retries = 0
-        while retries < self.ib.p.reconnect and not self.ib.connected():
-            self.ib.reconnect()
-            time.sleep(1.0)
-            logger.debug("Waiting for IB connection...")
-            retries = retries + 1
+        self.ib.reconnect()
         if self.ib.connected():
             logger.debug("Connected to IB.  Starting broker..")
             self.startingcash = self.cash = self.ib.get_acc_cash()
             self.startingvalue = self.value = self.ib.get_acc_value()
             self.ib.reqOpenOrders()
         else:
-            raise RuntimeError("Not connected to IB!")
+            raise RuntimeError("Unable to connected to IB!")
 
     def stop(self):
         super(IBBroker, self).stop()

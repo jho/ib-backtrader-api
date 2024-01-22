@@ -915,6 +915,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             if not fromstart or resub:
                 self.startdatas()
 
+            if not self.conn.isConnected and retries >= self.p.reconnect:
+                raise RuntimeError("Unable to connected to IB!")
             self.reconnects += 1
             return self.conn.isConnected()  
 
@@ -976,13 +978,10 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         # All errors are logged to the environment (cerebro), because many
         # errors in Interactive Brokers are actually informational and many may
         # actually be of interest to the user
-        if msg.reqId > 0:
+        if msg.reqId != 0:
             logger.error(f"{msg}")
         else:
             logger.warn(f"{msg}")
-
-        if msg.reqId == -1 and msg.errorCode == 502:
-            logger.error(msg.errorString)
 
         if not self.p.notifyall:
             self.notifs.put((msg, tuple(vars(msg).values()), dict(vars(msg).items())))
