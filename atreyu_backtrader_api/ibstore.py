@@ -784,7 +784,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     
     @logibmsg
     def start(self, data=None, broker=None):
-        logger.info(f"START data: {data} broker: {broker}")
+        logger.debug(f"START data: {data} broker: {broker}")
         if self.broker is None:
             self.broker = broker
         self.reconnect(fromstart=True)  # reconnect should be an invariant
@@ -2123,10 +2123,10 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                     position = Position(float(pos), float(avgCost))
                     self.positions_by_contract[contract.conId] = position
                     self.positions_by_symbol[contract.symbol] = position
-                    logger.debug(f"POSITIONS INITIAL: {contract.symbol}:{contract.conId}={position}")
+                    logger.info(f"Initial position: {contract.symbol}:{contract.conId}={position}")
                 else:
                     position = self.positions_by_contract[contract.conId]
-                    logger.debug(f"POSITION UPDATE: {contract.symbol}:{contract.conId}={position}")
+                    logger.debug(f"Position update: {contract.symbol}:{contract.conId}={position}")
                     if not position.fix(float(pos), avgCost):
                         err = ('The current calculated position and '
                             'the position reported by the broker do not match. '

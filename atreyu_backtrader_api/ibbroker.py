@@ -328,11 +328,10 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         self.notifs = queue.Queue()  # holds orders which are notified
         self.tonotify = collections.deque()  # hold oids to be notified
         self.cerebro = None
-        self.ib.start(broker=self)
 
     def start(self):
+        self.ib.start(broker=self)
         super(IBBroker, self).start()
-        self.ib.reconnect()
         if self.ib.connected():
             logger.debug("Connected to IB.  Starting broker..")
             self.startingcash = self.cash = self.ib.get_acc_cash()
@@ -495,7 +494,6 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             order = self.orderbyid[msg.orderId]
         except KeyError:
             logger.warn(f"No order found for: {msg.orderId} (msg={msg})")
-            #self.orderbyid[msg.orderId] = msg.order
             return  # not found, it was not an order
 
         if msg.status == self.SUBMITTED and msg.filled == 0:
@@ -655,7 +653,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             elif msg.errorCode == 201:  # rejected
                 if order.status == order.Rejected:
                     return
-                order.reject()
+                r.reject()
 
             else:
                 order.reject()  # default for all other cases
@@ -667,17 +665,25 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             try:
                 order = self.orderbyid[msg.orderId]
             except KeyError:
-                if self.cerebro and msg.contract.symbol in self.cerebro.datasbyname:
-                    data = self.cerebro.datasbyname[msg.contract.symbol]
-                    order = IBOrder.from_ib_order(self, data, msg.order)
-                    logger.debug(f"Handling existing open order: {msg.orderId} -> {order}")
+                order = self._mk_order_from_status(msg)
+                if order is not None:
                     self.orderbyid[msg.orderId] = order
-                    self.notify(order.clone())
-                else:
-                    logger.warn(f"Could not find data '{msg.contract.symbol}' for open order: {msg.orderId}")
                 return  # no order or no id in error
+            logger.debug(f"Handling order state: {order}")
 
             if msg.orderState.status in ['PendingCancel', 'Cancelled',
                                          'Canceled']:
                 # This is most likely due to an expiration]
                 order._willexpire = True
+            self.notify(order.clone())
+
+
+    def _mk_order_from_status(self, msg):
+        logger.debug(f"Datas: {self.cerebro.datasbyname.keys()}")
+        if self.cerebro and msg.contract.symbol in self.cerebro.datasbyname:
+            data = self.cerebro.datasbyname[msg.contract.symbol]
+            order = IBOrder.from_ib_order(self, data, msg.order)
+            return order
+        else:
+            logger.warn(f"Could not find data '{msg.contract.symbol}' for open order: {msg.orderId}")
+            return None
