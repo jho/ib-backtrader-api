@@ -664,10 +664,11 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         og_signal_handler = signal.getsignal(signal.SIGINT)
         def signal_handler(sig, frame):
+            logger.info(f"Active threads: {threading.active_count()} (threads = {threading.enumerate()})")
             logger.warning("SIGNIT! Shutting down EReader thread!")
             self.dontreconnect = True
+            self._event_disconnect.set() #signal wakeup from sleep loop
             self._disconnect()
-            logger.debug(f"Active threads: {threading.active_count()} (threads = {threading.enumerate()})")
             og_signal_handler(sig, frame)
 
         signal.signal(signal.SIGTERM, signal_handler)
@@ -692,6 +693,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         # Account list received
         self._event_managed_accounts = threading.Event()
         self._event_accdownload = threading.Event()
+        self._event_disconnect = threading.Event()
 
         self.dontreconnect = False  # for non-recoverable connect errors
 
@@ -872,8 +874,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                 self._connecting = True
                 if not firstconnect and retries > 0:
                     timeout = self.p.connection_timeout * retries
-                    logger.info(f"Retrying in {timeout} secs")
-                    time.sleep(timeout)
+                    logger.info(f"Retrying in {timeout} secs (retries: {retries})")
+                    self._event_disconnect.wait(timeout)
 
                 firstconnect = False
                 try:

@@ -26,6 +26,7 @@ import collections
 from copy import copy
 from datetime import date, datetime, timedelta
 import time
+import inspect
 import threading
 import uuid
 
@@ -462,14 +463,14 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         return self.submit(order)
 
     def notify(self, order):
-        logger.debug(f"Adding notification: {order} (size={self.notifs.qsize()})")
-        self.notifs.put(order.clone())
+        logger.debug(f"Enqueing notification: {order} (size={self.notifs.qsize()})")
 
     def get_notification(self):
         try:
             res = self.notifs.get(False)
             if res:
-                logger.debug(f"Retrived notification: {res} (size={self.notifs.qsize()})")
+                caller = inspect.stack()[1].function
+                logger.debug(f"{caller} Dequeued notification: {res} (size={self.notifs.qsize()})")
             return res
         except queue.Empty:
             pass
@@ -477,7 +478,9 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         return None
     
     def _addnotification(self, order, quicknotify=False):
-        self.notifs.put(order)
+        #caller = inspect.stack()[1].function
+        #logger.debug(f"_addnotification from '{caller}': {order} (size={self.notifs.qsize()})")
+        pass
 
     def next(self):
         self.notifs.put(None)  # mark notificatino boundary
@@ -489,6 +492,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
          'PendingSubmit', 'PendingCancel', 'PreSubmitted',)
 
     def push_orderstatus(self, msg):
+        logger.debug(f"Pushing order status: {msg}")
         # Cancelled and Submitted with Filled = 0 can be pushed immediately
         try:
             order = self.orderbyid[msg.orderId]
