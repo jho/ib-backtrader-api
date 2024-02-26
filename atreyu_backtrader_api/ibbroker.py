@@ -137,7 +137,7 @@ class IBOrder(OrderBase, ibapi.order.Order):
     }
 
     @classmethod
-    def from_ib_order(cls, owner, data, order):
+    def from_ib_order(cls, data, order):
         exectype = cls._BTOrderTypes[order.orderType]
         price = 0 if len(data.close) <= 0 else data.close[0] #this is probably wrong
         plimit = 0
@@ -156,7 +156,7 @@ class IBOrder(OrderBase, ibapi.order.Order):
                 raise NotImplementedError(f"TODO: {exectype}")
 
         order = cls(order.action, 
-                        owner=owner, 
+                        owner=None, 
                         data=data,
                         size=order.totalQuantity, 
                         price=price, 
@@ -326,7 +326,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         self.orderbyid = dict()  # orders by order id
         self.executions = dict()  # notified executions
         self.ordstatus = collections.defaultdict(dict)
-        self.notifs = queue.Queue()  # holds orders which are notified
+        self.notifs = collections.deque()  # holds orders which are notified
         self.tonotify = collections.deque()  # hold oids to be notified
         self.cerebro = None
 
@@ -463,27 +463,16 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         return self.submit(order)
 
     def notify(self, order):
-        logger.debug(f"Enqueing notification: {order} (size={self.notifs.qsize()})")
+        self.notifs.append(order)
+        logger.debug(f"Enqueued notification: {order} (size={len(self.notifs)})")
 
     def get_notification(self):
-        try:
-            res = self.notifs.get(False)
-            if res:
-                caller = inspect.stack()[1].function
-                logger.debug(f"{caller} Dequeued notification: {res} (size={self.notifs.qsize()})")
-            return res
-        except queue.Empty:
-            pass
-
-        return None
+        res = self.notifs.popleft()
+        logger.debug(f"Dequeued: {res}")
+        return res
     
-    def _addnotification(self, order, quicknotify=False):
-        #caller = inspect.stack()[1].function
-        #logger.debug(f"_addnotification from '{caller}': {order} (size={self.notifs.qsize()})")
-        pass
-
     def next(self):
-        self.notifs.put(None)  # mark notificatino boundary
+        self.notifs.append(None)  # mark notificatino boundary
 
     # Order statuses in msg
     (SUBMITTED, FILLED, CANCELLED, INACTIVE,
@@ -686,7 +675,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         logger.debug(f"Datas: {self.cerebro.datasbyname.keys()}")
         if self.cerebro and msg.contract.symbol in self.cerebro.datasbyname:
             data = self.cerebro.datasbyname[msg.contract.symbol]
-            order = IBOrder.from_ib_order(self, data, msg.order)
+            order = IBOrder.from_ib_order(data, msg.order)
             return order
         else:
             logger.warn(f"Could not find data '{msg.contract.symbol}' for open order: {msg.orderId}")
