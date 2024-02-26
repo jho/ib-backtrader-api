@@ -50,6 +50,7 @@ bytes = bstr  # py2/3 need for ibpy
 
 logger = logging.getLogger(__name__)
 
+
 class IBOrderState(object):
     # wraps OrderState object and can print it
     _fields = ['status', 'initMargin', 'maintMargin', 'equityWithLoan',
@@ -139,7 +140,8 @@ class IBOrder(OrderBase, ibapi.order.Order):
     @classmethod
     def from_ib_order(cls, data, order):
         exectype = cls._BTOrderTypes[order.orderType]
-        price = 0 if len(data.close) <= 0 else data.close[0] #this is probably wrong
+        # this is probably wrong
+        price = 0 if len(data.close) <= 0 else data.close[0]
         plimit = 0
         match exectype:
             case Order.Stop:
@@ -155,19 +157,19 @@ class IBOrder(OrderBase, ibapi.order.Order):
             case _:
                 raise NotImplementedError(f"TODO: {exectype}")
 
-        order = cls(order.action, 
-                        owner=None, 
-                        data=data,
-                        size=order.totalQuantity, 
-                        price=price, 
-                        pricelimit=plimit,
-                        exectype=exectype, 
-                        valid=None, #TODO
-                        tradeid=None, #TODO
-                        simulated=True,
-                        #clientId=self.ib.clientId,
-                        orderId=order.orderId
-        )
+        order = cls(order.action,
+                    owner=None,
+                    data=data,
+                    size=order.totalQuantity,
+                    price=price,
+                    pricelimit=plimit,
+                    exectype=exectype,
+                    valid=None,  # TODO
+                    tradeid=None,  # TODO
+                    simulated=True,
+                    # clientId=self.ib.clientId,
+                    orderId=order.orderId
+                    )
         return order
 
     def __init__(self, action, **kwargs):
@@ -351,7 +353,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
     def getcash(self):
         # This call cannot block if no answer is available from ib
         self.cash = self.ib.get_acc_cash()
-        #logger.debug(f"get_acc_cash: {self.cash}")
+        # logger.debug(f"get_acc_cash: {self.cash}")
         return self.cash
 
     def getvalue(self, datas=None):
@@ -362,15 +364,15 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
                 pos = position.size * position.price
                 value = value + pos
         else:
-            self.value = self.ib.get_acc_value() 
+            self.value = self.ib.get_acc_value()
             value = self.value
         datas = [] if datas is None else datas
-        #logger.debug(f"getvalue({list(map(lambda x: x._name, datas))}): {value}")
+        # logger.debug(f"getvalue({list(map(lambda x: x._name, datas))}): {value}")
         return value
 
     def getposition(self, data, clone=True):
         position = self.ib.getposition(data._name, clone=clone)
-        #logger.debug(f"getposition({data._name}) = (size={position.size}, price={position.price})")
+        # logger.debug(f"getposition({data._name}) = (size={position.size}, price={position.price})")
         return position
 
     def cancel(self, order):
@@ -407,7 +409,6 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
         self.notify(order)
 
         return order
-
 
     def getcommissioninfo(self, data):
         logger.info("getcommissioninfo()")
@@ -464,14 +465,15 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
 
     def notify(self, order):
         self.notifs.append(order)
-        logger.debug(f"Enqueued notification: {order} (size={len(self.notifs)})")
+        logger.debug(
+            f"Enqueued notification: {order} (size={len(self.notifs)})")
 
     def get_notification(self):
         res = self.notifs.popleft()
         if res:
             logger.debug(f"Dequeued: {res}")
         return res
-    
+
     def next(self):
         self.notifs.append(None)  # mark notificatino boundary
 
@@ -671,7 +673,6 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
                 order._willexpire = True
             self.notify(order.clone())
 
-
     def _mk_order_from_status(self, msg):
         logger.debug(f"Datas: {self.cerebro.datasbyname.keys()}")
         if self.cerebro and msg.contract.symbol in self.cerebro.datasbyname:
@@ -679,5 +680,6 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             order = IBOrder.from_ib_order(data, msg.order)
             return order
         else:
-            logger.warn(f"Could not find data '{msg.contract.symbol}' for open order: {msg.orderId}")
+            logger.warn(
+                f"Could not find data '{msg.contract.symbol}' for open order: {msg.orderId}")
             return None
