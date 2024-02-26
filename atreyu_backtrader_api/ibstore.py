@@ -2083,7 +2083,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
     def cancelOrder(self, orderid):
         '''Proxy to cancelOrder'''
-        self.conn.cancelOrder(orderid)
+        self.conn.cancelOrder(orderid, "")
     
     def placeOrder(self, orderid, contract, order):
         '''Proxy to placeOrder'''
