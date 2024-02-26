@@ -468,7 +468,8 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
 
     def get_notification(self):
         res = self.notifs.popleft()
-        logger.debug(f"Dequeued: {res}")
+        if res:
+            logger.debug(f"Dequeued: {res}")
         return res
     
     def next(self):
