@@ -35,6 +35,7 @@ from atreyu_backtrader_api import ibstore
 import logging
 logger = logging.getLogger(__name__)
 
+
 class MetaIBData(DataBase.__class__):
     def __init__(cls, name, bases, dct):
         '''Class has already been created ... register'''
@@ -158,7 +159,7 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
           - 'TRADES' for any other
 
         Use 'ASK' for the Ask quote of cash assets
-        
+
         Check the IB API docs if another value is wished
         (TRADES,MIDPOINT,BID,ASK,BID_ASK,ADJUSTED_LAST,HISTORICAL_VOLATILITY,
          OPTION_IMPLIED_VOLATILITY, REBATE_RATE, FEE_RATE,
@@ -246,7 +247,7 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
         ('right', None),  # Option or Warrant Call('C') or Put('P')
         ('strike', None),  # Future, Option or Warrant strike price
         ('multiplier', None),  # Future, Option or Warrant multiplier
-        ('expiry', None),  # Future, Option or Warrant lastTradeDateOrContractMonth date 
+        ('expiry', None),  # Future, Option or Warrant lastTradeDateOrContractMonth date
         ('currency', ''),  # currency for the contract
         ('localSymbol', None),  # Warrant localSymbol override
         ('rtbar', False),  # use RealTime 5 seconds bars
@@ -259,8 +260,10 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
         ('backfill_from', None),  # additional data source to do backfill from
         ('latethrough', False),  # let late samples through
         ('tradename', None),  # use a different asset as order target
-        ('numberOfTicks', 1000),  # Number of distinct data points. Max is 1000 per request.
-        ('ignoreSize', False),  # Omit updates that reflect only changes in size, and not price. Applicable to Bid_Ask data requests.
+        # Number of distinct data points. Max is 1000 per request.
+        ('numberOfTicks', 1000),
+        # Omit updates that reflect only changes in size, and not price. Applicable to Bid_Ask data requests.
+        ('ignoreSize', False),
     )
 
     _store = ibstore.IBStore
@@ -316,6 +319,8 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
         self.ib = self._store(**kwargs)
         self.precontract = self.parsecontract(self.p.dataname)
         self.pretradecontract = self.parsecontract(self.p.tradename)
+        self.tradecontract = None
+        self.tradecontractdetails = None
 
     def setenvironment(self, env):
         '''Receives an environment (cerebro) and passes it over to the store it
@@ -392,7 +397,7 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
         # Make the initial contract
         precon = self.ib.makecontract(
             symbol=symbol, sectype=sectype, exch=exch, curr=curr,
-            expiry=expiry, strike=strike, right=right, mult=mult, 
+            expiry=expiry, strike=strike, right=right, mult=mult,
             primaryExch=primaryExch, localSymbol=localSymbol)
 
         return precon
@@ -413,8 +418,6 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
 
         self.contract = None
         self.contractdetails = None
-        self.tradecontract = None
-        self.tradecontractdetails = None
 
         if self.p.backfill_from is not None:
             self._state = self._ST_FROM
@@ -430,37 +433,42 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
             return
 
         self.put_notification(self.CONNECTED)
-        # get real contract details with real conId (contractId)
-        cds = self.ib.getContractDetails(self.precontract, maxcount=1)
-        if cds is not None:
-            cdetails = cds[0]
-            self.contract = cdetails.contract
-            self.contractdetails = cdetails
-        else:
-            # no contract can be found (or many)
-            self.put_notification(self.DISCONNECTED)
-            return
+        self._populate_contract()
 
-        if self.pretradecontract is None:
-            # no different trading asset - default to standard asset
-            self.tradecontract = self.contract
-            self.tradecontractdetails = self.contractdetails
-        else:
-            # different target asset (typical of some CDS products)
-            # use other set of details
-            cds = self.ib.getContractDetails(self.pretradecontract, maxcount=1)
+        if self._state == self._ST_START:
+            self._start_finish()  # to finish initialization
+            self._st_start()
+
+    def _populate_contract(self):
+        if self.tradecontract is None:
+            # get real contract details with real conId (contractId)
+            cds = self.ib.getContractDetails(self.precontract, maxcount=1)
             if cds is not None:
                 cdetails = cds[0]
-                self.tradecontract = cdetails.contract
-                self.tradecontractdetails = cdetails
+                self.contract = cdetails.contract
+                self.contractdetails = cdetails
             else:
                 # no contract can be found (or many)
                 self.put_notification(self.DISCONNECTED)
                 return
 
-        if self._state == self._ST_START:
-            self._start_finish()  # to finish initialization
-            self._st_start()
+            if self.pretradecontract is None:
+                # no different trading asset - default to standard asset
+                self.tradecontract = self.contract
+                self.tradecontractdetails = self.contractdetails
+            else:
+                # different target asset (typical of some CDS products)
+                # use other set of details
+                cds = self.ib.getContractDetails(
+                    self.pretradecontract, maxcount=1)
+                if cds is not None:
+                    cdetails = cds[0]
+                    self.tradecontract = cdetails.contract
+                    self.tradecontractdetails = cdetails
+                else:
+                    # no contract can be found (or many)
+                    self.put_notification(self.DISCONNECTED)
+                    return
 
     def stop(self):
         '''Stops and tells the store to stop'''
@@ -477,7 +485,8 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
         elif self._usertvol and self._timeframe == bt.TimeFrame.Ticks:
             self.qlive = self.ib.reqTickByTickData(self.contract, self.p.what)
         else:
-            self.qlive = self.ib.reqRealTimeBars(self.contract, what = self.p.what)
+            self.qlive = self.ib.reqRealTimeBars(
+                self.contract, what=self.p.what)
 
         self._subcription_valid = True
         return self.qlive
@@ -583,7 +592,8 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
                         self.reqdata()  # resubscribe
                     continue
 
-                elif msg == -10225:  # Bust event occurred, current subscription is deactivated.
+                # Bust event occurred, current subscription is deactivated.
+                elif msg == -10225:
                     self._subcription_valid = False
                     if not self._statelivereconn:
                         self._statelivereconn = self.p.backfill
@@ -645,7 +655,7 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
                     self.qhist = self.ib.reqHistoricalTicksEx(
                         contract=self.contract, enddate=dtend,
                         what=self.p.what, useRTH=self.p.useRTH, tz=self._tz,
-                        )
+                    )
 
                 self._state = self._ST_HISTORBACK
                 self._statelivereconn = False  # no longer in live
