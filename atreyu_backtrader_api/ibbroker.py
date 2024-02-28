@@ -21,19 +21,15 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import collections
-from copy import copy
-from datetime import date, datetime, timedelta
-import time
-import inspect
+import logging
 import threading
-import time
 import uuid
 from datetime import date, datetime, timedelta
 
 import ibapi.order
 from backtrader import BrokerBase, Order, OrderBase, date2num, num2date
 from backtrader.comminfo import CommInfoBase
-from backtrader.utils.py3 import bstr, queue, with_metaclass
+from backtrader.utils.py3 import bstr, with_metaclass
 
 from atreyu_backtrader_api import ibstore
 
@@ -132,13 +128,13 @@ class IBOrder(OrderBase, ibapi.order.Order):
     }
 
     _BTOrderTypes = {
-        bytes('MKT'): Order.Market,
-        bytes('LMT'): Order.Limit,
-        bytes('MOC'): Order.Close,
-        bytes('STP'): Order.Stop,
-        bytes('STPLMT'): Order.StopLimit,
-        bytes('TRAIL'): Order.StopTrail,
-        bytes('TRAIL LIMIT'): Order.StopTrailLimit,
+        bytes("MKT"): Order.Market,
+        bytes("LMT"): Order.Limit,
+        bytes("MOC"): Order.Close,
+        bytes("STP"): Order.Stop,
+        bytes("STPLMT"): Order.StopLimit,
+        bytes("TRAIL"): Order.StopTrail,
+        bytes("TRAIL LIMIT"): Order.StopTrailLimit,
     }
 
     @classmethod
@@ -161,19 +157,20 @@ class IBOrder(OrderBase, ibapi.order.Order):
             case _:
                 raise NotImplementedError(f"TODO: {exectype}")
 
-        order = cls(order.action,
-                    owner=None,
-                    data=data,
-                    size=order.totalQuantity,
-                    price=price,
-                    pricelimit=plimit,
-                    exectype=exectype,
-                    valid=None,  # TODO
-                    tradeid=None,  # TODO
-                    simulated=True,
-                    # clientId=self.ib.clientId,
-                    orderId=order.orderId
-                    )
+        order = cls(
+            order.action,
+            owner=None,
+            data=data,
+            size=order.totalQuantity,
+            price=price,
+            pricelimit=plimit,
+            exectype=exectype,
+            valid=None,  # TODO
+            tradeid=None,  # TODO
+            simulated=True,
+            # clientId=self.ib.clientId,
+            orderId=order.orderId,
+        )
         return order
 
     def __init__(self, action, **kwargs):
@@ -410,8 +407,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             order.ocaGroup = self.orderbyid[order.oco.orderId].ocaGroup
 
         self.orderbyid[order.orderId] = order
-        self.ib.placeOrder(
-            order.orderId, self.ib.get_contract(order.data), order)
+        self.ib.placeOrder(order.orderId, self.ib.get_contract(order.data), order)
         self.notify(order)
 
         return order
@@ -501,8 +497,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
 
     def notify(self, order):
         self.notifs.append(order)
-        logger.debug(
-            f"Enqueued notification: {order} (size={len(self.notifs)})")
+        logger.debug(f"Enqueued notification: {order} (size={len(self.notifs)})")
 
     def get_notification(self):
         res = self.notifs.popleft()
@@ -705,7 +700,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             elif msg.errorCode == 201:  # rejected
                 if order.status == order.Rejected:
                     return
-                r.reject()
+                order.reject()
 
             else:
                 order.reject()  # default for all other cases
@@ -736,5 +731,6 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
             return order
         else:
             logger.warn(
-                f"Could not find data '{msg.contract.symbol}' for open order: {msg.orderId}")
+                f"Could not find data '{msg.contract.symbol}' for open order: {msg.orderId}"
+            )
             return None

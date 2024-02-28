@@ -238,29 +238,29 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
     """
 
     params = (
-        ('secType', 'STK'),  # usual industry value
-        ('exchange', 'SMART'),  # usual industry value
-        ('primaryExchange', None),  # native exchange of the contract
-        ('right', None),  # Option or Warrant Call('C') or Put('P')
-        ('strike', None),  # Future, Option or Warrant strike price
-        ('multiplier', None),  # Future, Option or Warrant multiplier
-        ('expiry', None),  # Future, Option or Warrant lastTradeDateOrContractMonth date
-        ('currency', ''),  # currency for the contract
-        ('localSymbol', None),  # Warrant localSymbol override
-        ('rtbar', False),  # use RealTime 5 seconds bars
-        ('historical', False),  # only historical download
-        ('what', None),  # historical - what to show
-        ('useRTH', False),  # historical - download only Regular Trading Hours
-        ('qcheck', 0.5),  # timeout in seconds (float) to check for events
-        ('backfill_start', True),  # do backfilling at the start
-        ('backfill', True),  # do backfilling when reconnecting
-        ('backfill_from', None),  # additional data source to do backfill from
-        ('latethrough', False),  # let late samples through
-        ('tradename', None),  # use a different asset as order target
+        ("secType", "STK"),  # usual industry value
+        ("exchange", "SMART"),  # usual industry value
+        ("primaryExchange", None),  # native exchange of the contract
+        ("right", None),  # Option or Warrant Call('C') or Put('P')
+        ("strike", None),  # Future, Option or Warrant strike price
+        ("multiplier", None),  # Future, Option or Warrant multiplier
+        ("expiry", None),  # Future, Option or Warrant lastTradeDateOrContractMonth date
+        ("currency", ""),  # currency for the contract
+        ("localSymbol", None),  # Warrant localSymbol override
+        ("rtbar", False),  # use RealTime 5 seconds bars
+        ("historical", False),  # only historical download
+        ("what", None),  # historical - what to show
+        ("useRTH", False),  # historical - download only Regular Trading Hours
+        ("qcheck", 0.5),  # timeout in seconds (float) to check for events
+        ("backfill_start", True),  # do backfilling at the start
+        ("backfill", True),  # do backfilling when reconnecting
+        ("backfill_from", None),  # additional data source to do backfill from
+        ("latethrough", False),  # let late samples through
+        ("tradename", None),  # use a different asset as order target
         # Number of distinct data points. Max is 1000 per request.
-        ('numberOfTicks', 1000),
+        ("numberOfTicks", 1000),
         # Omit updates that reflect only changes in size, and not price. Applicable to Bid_Ask data requests.
-        ('ignoreSize', False),
+        ("ignoreSize", False),
     )
 
     _store = ibstore.IBStore
@@ -393,9 +393,17 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
 
         # Make the initial contract
         precon = self.ib.makecontract(
-            symbol=symbol, sectype=sectype, exch=exch, curr=curr,
-            expiry=expiry, strike=strike, right=right, mult=mult,
-            primaryExch=primaryExch, localSymbol=localSymbol)
+            symbol=symbol,
+            sectype=sectype,
+            exch=exch,
+            curr=curr,
+            expiry=expiry,
+            strike=strike,
+            right=right,
+            mult=mult,
+            primaryExch=primaryExch,
+            localSymbol=localSymbol,
+        )
 
         return precon
 
@@ -456,8 +464,7 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
             else:
                 # different target asset (typical of some CDS products)
                 # use other set of details
-                cds = self.ib.getContractDetails(
-                    self.pretradecontract, maxcount=1)
+                cds = self.ib.getContractDetails(self.pretradecontract, maxcount=1)
                 if cds is not None:
                     cdetails = cds[0]
                     self.tradecontract = cdetails.contract
@@ -482,8 +489,7 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
         elif self._usertvol and self._timeframe == bt.TimeFrame.Ticks:
             self.qlive = self.ib.reqTickByTickData(self.contract, self.p.what)
         else:
-            self.qlive = self.ib.reqRealTimeBars(
-                self.contract, what=self.p.what)
+            self.qlive = self.ib.reqRealTimeBars(self.contract, what=self.p.what)
 
         self._subcription_valid = True
         return self.qlive
@@ -657,8 +663,11 @@ class IBData(with_metaclass(MetaIBData, DataBase)):
                 else:
                     # dtend = num2date(dtend)
                     self.qhist = self.ib.reqHistoricalTicksEx(
-                        contract=self.contract, enddate=dtend,
-                        what=self.p.what, useRTH=self.p.useRTH, tz=self._tz,
+                        contract=self.contract,
+                        enddate=dtend,
+                        what=self.p.what,
+                        useRTH=self.p.useRTH,
+                        tz=self._tz,
                     )
 
                 self._state = self._ST_HISTORBACK

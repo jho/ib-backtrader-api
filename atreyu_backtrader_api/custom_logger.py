@@ -2,11 +2,17 @@ import logging
 import os
 from datetime import datetime
 
-
 # Create the global logger
 
 
-def setup_custom_logger(global_name, filename, logdirname='./logs', debug_level=logging.ERROR, console_level=logging.ERROR, console=False):
+def setup_custom_logger(
+    global_name,
+    filename,
+    logdirname="./logs",
+    debug_level=logging.ERROR,
+    console_level=logging.ERROR,
+    console=False,
+):
 
     # Check if logdir exists
     if not os.path.exists(logdirname):
@@ -23,15 +29,21 @@ def setup_custom_logger(global_name, filename, logdirname='./logs', debug_level=
     logfilename = os.path.join(logdirname, filename)
     if os.path.exists(logfilename):
         # Create a new logfile for every run
-        now = datetime.now().strftime('%Y%m%dT%H%M%S')
+        now = datetime.now().strftime("%Y%m%dT%H%M%S")
         new_logfile = os.path.join(logdirname, now + "." + filename)
         os.rename(logfilename, new_logfile)
 
     # Set up a log line format
-    log_fmt = '%(asctime)s.%(msecs)03d - %(levelname)-7s - %(threadName)s - %(filename)s:%(lineno)d [%(funcName)s] - %(message)s'
-    date_fmt = '%Y-%m-%d %H:%M:%S'
-    logging.basicConfig(filename=logfilename, level=debug_level,
-                        format=log_fmt, datefmt=date_fmt)
+    log_fmt = (
+        "%(asctime)s.%(msecs)03d - "
+        "%(levelname)-7s - "
+        "%(threadName)s - "
+        "%(filename)s:%(lineno)d [%(funcName)s] - %(message)s"
+    )
+    date_fmt = "%Y-%m-%d %H:%M:%S"
+    logging.basicConfig(
+        filename=logfilename, level=debug_level, format=log_fmt, datefmt=date_fmt
+    )
 
     logger = logging.getLogger(global_name)
     logger.setLevel(debug_level)
