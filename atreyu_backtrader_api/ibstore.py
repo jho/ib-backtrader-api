@@ -18,10 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ###############################################################################
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 import bisect
 import collections
@@ -32,18 +29,12 @@ import random
 import threading
 import time
 from copy import copy
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 
-from backtrader import Position
-from backtrader import TimeFrame
+from backtrader import Position, TimeFrame
 from backtrader.metabase import MetaParams
-from backtrader.utils import AutoDict
-from backtrader.utils import UTC
-from backtrader.utils.py3 import bstr
-from backtrader.utils.py3 import long
-from backtrader.utils.py3 import queue
-from backtrader.utils.py3 import with_metaclass
+from backtrader.utils import UTC, AutoDict
+from backtrader.utils.py3 import bstr, long, queue, with_metaclass
 from ibapi.client import EClient
 from ibapi.contract import Contract
 from ibapi.wrapper import EWrapper

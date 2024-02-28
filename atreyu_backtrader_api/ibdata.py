@@ -18,22 +18,14 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ###############################################################################
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 import logging
 
 import backtrader as bt
-from backtrader import date2num
-from backtrader import num2date
-from backtrader import TimeFrame
+from backtrader import TimeFrame, date2num, num2date
 from backtrader.feed import DataBase
-from backtrader.utils.py3 import integer_types
-from backtrader.utils.py3 import queue
-from backtrader.utils.py3 import string_types
-from backtrader.utils.py3 import with_metaclass
+from backtrader.utils.py3 import integer_types, queue, string_types, with_metaclass
 
 from atreyu_backtrader_api import ibstore
 
