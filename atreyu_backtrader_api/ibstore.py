@@ -1614,78 +1614,78 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
     @logibmsg
     def reqRealTimeBars(self, contract, useRTH=False, duration=5, what=None):
-        '''Creates a request for (5 seconds) Real Time Bars
+        """
+        Creates a request for (5 seconds) Real Time Bars
 
-            Params:
-              - contract: a ib.ext.Contract.Contract intance
-              - useRTH: (default: False) passed to TWS
-              - duration: (default: 5) passed to TWS, no other value works in 2016)
+        Params:
+          - contract: a ib.ext.Contract.Contract intance
+          - useRTH: (default: False) passed to TWS
+          - duration: (default: 5) passed to TWS, no other value works in 2016)
 
-            Returns:
-              - a Queue the client can wait on to receive a RTVolume instance
-            """
-            # get a ticker/queue for identification/data delivery
-            tickerId, q = self.getTickerQueue()
+        Returns:
+          - a Queue the client can wait on to receive a RTVolume instance
+        """
+        # get a ticker/queue for identification/data delivery
+        tickerId, q = self.getTickerQueue()
 
-            what = what or "TRADES"
+        what = what or "TRADES"
 
-            # 20150929 - Only 5 secs supported for duration
-            self.conn.reqRealTimeBars(
-                tickerId,
-                contract,
-                duration,
-                # bytes('TRADES'),
-                bytes(what),
-                useRTH,
-                [],
-            )
+        # 20150929 - Only 5 secs supported for duration
+        self.conn.reqRealTimeBars(
+            tickerId,
+            contract,
+            duration,
+            # bytes('TRADES'),
+            bytes(what),
+            useRTH,
+            [],
+        )
 
-            return q
+        return q
 
-        def cancelRealTimeBars(self, q):
-            """Cancels an existing MarketData subscription
+    def cancelRealTimeBars(self, q):
+        """Cancels an existing MarketData subscription
 
-            Params:
-              - q: the Queue returned by reqMktData
-            """
-            with self._lock_q:
-                tickerId = self.ts.get(q, None)
-                if tickerId is not None:
-                    self.conn.cancelRealTimeBars(tickerId)
+        Params:
+            - q: the Queue returned by reqMktData
+        """
+        with self._lock_q:
+            tickerId = self.ts.get(q, None)
+            if tickerId is not None:
+                self.conn.cancelRealTimeBars(tickerId)
 
-                logger.debug(f"Cancel data queue for {tickerId}")
-                self.cancelQueue(q, True)
+            logger.debug(f"Cancel data queue for {tickerId}")
+            self.cancelQueue(q, True)
 
-        def reqMktData(self, contract, what=None):
-            """Creates a MarketData subscription
+    def reqMktData(self, contract, what=None):
+        """Creates a MarketData subscription
 
-            Params:
-              - contract: a ib.ext.Contract.Contract intance
+        Params:
+            - contract: a ib.ext.Contract.Contract intance
 
-            Returns:
-              - a Queue the client can wait on to receive a RTVolume instance
-            """
-            # get a ticker/queue for identification/data delivery
-            tickerId, q = self.getTickerQueue()
-            ticks = "233"  # request RTVOLUME tick delivered over tickString
+        Returns:
+            - a Queue the client can wait on to receive a RTVolume instance
+        """
+        # get a ticker/queue for identification/data delivery
+        tickerId, q = self.getTickerQueue()
+        ticks = "233"  # request RTVOLUME tick delivered over tickString
 
-            if contract.secType in ["CASH", "CFD"]:
-                self.iscash[tickerId] = True
-                ticks = ""  # cash markets do not get RTVOLUME
-                if what == "ASK":
-                    self.iscash[tickerId] = 2
+        if contract.secType in ["CASH", "CFD"]:
+            self.iscash[tickerId] = True
+            ticks = ""  # cash markets do not get RTVOLUME
+            if what == "ASK":
+                self.iscash[tickerId] = 2
 
-            # q.put(None)  # to kickstart backfilling
-            # Can request 233 also for cash ... nothing will arrive
-            self.conn.reqMktData(tickerId, contract,
-                                 bytes(ticks), False, False, [])
-            return q
+        # q.put(None)  # to kickstart backfilling
+        # Can request 233 also for cash ... nothing will arrive
+        self.conn.reqMktData(tickerId, contract, bytes(ticks), False, False, [])
+        return q
 
-        def reqTickByTickData(self, contract, what=None, ignoreSize=True):
-            """
-            Tick-by-tick data corresponding to the data shown in the
-            TWS Time & Sales Window is available starting with TWS v969 and API v973.04.
-        '''
+    def reqTickByTickData(self, contract, what=None, ignoreSize=True):
+        """
+        Tick-by-tick data corresponding to the data shown in the
+        TWS Time & Sales Window is available starting with TWS v969 and API v973.04.
+        """
 
         if what == "TRADES":
             what = "Last"
