@@ -18,7 +18,13 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ###############################################################################
-from __future__ import absolute_import, division, print_function, unicode_literals
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+import logging
+from ibapi.ticktype import TickTypeEnum
+from ibapi.contract import Contract
+from ibapi.wrapper import EWrapper
+from ibapi.client import EClient
 
 import bisect
 import collections
@@ -28,8 +34,9 @@ import pprint
 import random
 import threading
 import time
-from copy import copy
-from datetime import datetime, timedelta
+import signal
+import sys
+import traceback
 
 from backtrader import Position, TimeFrame
 from backtrader.metabase import MetaParams
@@ -42,6 +49,7 @@ from ibapi.wrapper import EWrapper
 # import functools
 
 bytes = bstr  # py2/3 need for ibpy
+
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +79,7 @@ class ErrorMsg(object):
         return f"{self.vars}"
 
 
+
 class OpenOrderMsg(object):
     def __init__(self, orderId, contract, order, orderState):
         self.vars = vars()
@@ -84,21 +93,12 @@ class OpenOrderMsg(object):
         return f"{self.vars}"
 
 
+
 class OrderStatusMsg(object):
-    def __init__(
-        self,
-        orderId,
-        status,
-        filled,
-        remaining,
-        avgFillPrice,
-        permId,
-        parentId,
-        lastFillPrice,
-        clientId,
-        whyHeld,
-        mktCapPrice,
-    ):
+    def __init__(self, orderId, status, filled,
+                 remaining, avgFillPrice, permId,
+                 parentId, lastFillPrice, clientId,
+                 whyHeld, mktCapPrice):
         self.vars = vars()
         self.orderId = orderId
         self.status = status
@@ -114,6 +114,7 @@ class OrderStatusMsg(object):
 
     def __str__(self):
         return f"{self.vars}"
+
 
 
 class RTVolume(object):
@@ -152,8 +153,10 @@ class RTVolume(object):
         return f"{self.vars}"
 
 
+
 class RTPrice(object):
-    """Set price from a tickPrice"""
+    '''Set price from a tickPrice
+    '''
 
     def __init__(self, price, tmoffset=None):
         self.vars = vars()
@@ -173,8 +176,10 @@ class RTPrice(object):
         return f"{self.vars}"
 
 
+
 class RTSize(object):
-    """Set size from a tickSize"""
+    '''Set size from a tickSize
+    '''
 
     def __init__(self, size, tmoffset=None):
         self.vars = vars()
@@ -194,8 +199,10 @@ class RTSize(object):
         return f"{self.vars}"
 
 
+
 class RTBar(object):
-    """Set realtimeBar object"""
+    '''Set realtimeBar object
+    '''
 
     def __init__(self, reqId, time, open_, high, low, close, volume, wap, count):
         self.vars = vars()
@@ -213,8 +220,10 @@ class RTBar(object):
         return f"{self.vars}"
 
 
+
 class HistBar(object):
-    """Set historicalBar object"""
+    '''Set historicalBar object
+    '''
 
     def __init__(self, reqId, bar):
         self.vars = vars()
@@ -232,8 +241,10 @@ class HistBar(object):
         return f"{self.vars}"
 
 
+
 class HistTick(object):
-    """Set historicalTick object: 'MIDPOINT', 'BID_ASK', 'TRADES'"""
+    '''Set historicalTick object: 'MIDPOINT', 'BID_ASK', 'TRADES' 
+    '''
 
     def __init__(self, tick, dataType):
         self.vars = vars()
@@ -260,12 +271,12 @@ class HistTick(object):
         return f"{self.vars}"
 
 
-class RTTickLast(object):
-    """Set realtimeTick object: 'TRADES'"""
 
-    def __init__(
-        self, tickType, time, price, size, tickAtrribLast, exchange, specialConditions
-    ):
+class RTTickLast(object):
+    '''Set realtimeTick object: 'TRADES' 
+    '''
+
+    def __init__(self, tickType, time, price, size, tickAtrribLast, exchange, specialConditions):
         self.vars = vars()
         self.dataType = "RT_TICK_LAST"
         self.datetime = datetime.utcfromtimestamp(time)
@@ -282,8 +293,10 @@ class RTTickLast(object):
         return f"{self.vars}"
 
 
+
 class RTTickBidAsk(object):
-    """Set realtimeTick object: 'MIDPOINT', 'BID_ASK', 'TRADES'"""
+    '''Set realtimeTick object: 'MIDPOINT', 'BID_ASK', 'TRADES' 
+    '''
 
     def __init__(self, time, bidPrice, askPrice, bidSize, askSize, tickAttribBidAsk):
         self.vars = vars()
@@ -300,8 +313,10 @@ class RTTickBidAsk(object):
         return f"{self.vars}"
 
 
+
 class RTTickMidPoint(object):
-    """Set realtimeTick object: 'MIDPOINT'"""
+    '''Set realtimeTick object: 'MIDPOINT'
+    '''
 
     def __init__(self, time, midPoint):
         self.vars = vars()
@@ -311,6 +326,7 @@ class RTTickMidPoint(object):
 
     def __str__(self):
         return f"{self.vars}"
+
 
 
 class MetaSingleton(MetaParams):
@@ -338,7 +354,8 @@ def logibmsg(fn):
                 print(f"Calling {fn.__name__}({signature})")
             return fn(self, *args, **kwargs)
         except Exception as e:
-            logger.exception(f"Exception raised in {fn.__name__}. exception: {str(e)}")
+            logger.exception(
+                f"Exception raised in {fn.__name__}. exception: {str(e)}")
             raise e
 
     return logmsg_decorator
@@ -376,7 +393,6 @@ class IBApi(EWrapper, EClient):
     def connectionClosed(self):
         """This function is called when TWS closes the sockets
         connection with the ActiveX control, or when TWS is shut down."""
-        logger.debug(f"connectionClosed")
         self.cb.connectionClosed()
 
     @logibmsg
@@ -411,16 +427,10 @@ class IBApi(EWrapper, EClient):
     ):
         """This function is called only when reqAccountUpdates on
         EEClientSocket object has been called."""
-        self.cb.updatePortfolio(
-            contract,
-            position,
-            marketPrice,
-            marketValue,
-            averageCost,
-            unrealizedPNL,
-            realizedPNL,
-            accountName,
-        )
+        self.cb.updatePortfolio(contract, position,
+                                marketPrice, marketValue,
+                                averageCost, unrealizedPNL,
+                                realizedPNL, accountName)
 
     @logibmsg
     def contractDetails(self, reqId, contractDetails):
@@ -455,39 +465,17 @@ class IBApi(EWrapper, EClient):
         self.cb.openOrderEnd()
 
     @logibmsg
-    def orderStatus(
-        self,
-        orderId,
-        status,
-        filled,
-        remaining,
-        avgFillPrice,
-        permId,
-        parentId,
-        lastFillPrice,
-        clientId,
-        whyHeld,
-        mktCapPrice,
-    ):
+    def orderStatus(self, orderId, status, filled,
+                    remaining, avgFillPrice, permId,
+                    parentId, lastFillPrice, clientId,
+                    whyHeld, mktCapPrice):
         """This event is called whenever the status of an order changes. It is
         also fired after reconnecting to TWS if the client has any open orders.
         """
-        logger.debug("orderStatus")
-        self.cb.orderStatus(
-            OrderStatusMsg(
-                orderId,
-                status,
-                filled,
-                remaining,
-                avgFillPrice,
-                permId,
-                parentId,
-                lastFillPrice,
-                clientId,
-                whyHeld,
-                mktCapPrice,
-            )
-        )
+        self.cb.orderStatus(OrderStatusMsg(orderId, status, filled,
+                                           remaining, avgFillPrice, permId,
+                                           parentId, lastFillPrice, clientId,
+                                           whyHeld, mktCapPrice))
 
     @logibmsg
     def commissionReport(self, commissionReport):
@@ -498,7 +486,8 @@ class IBApi(EWrapper, EClient):
 
     @logibmsg
     def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=""):
-        self.cb.error(ErrorMsg(reqId, errorCode, errorString, advancedOrderRejectJson))
+        self.cb.error(ErrorMsg(reqId, errorCode,
+                      errorString, advancedOrderRejectJson))
 
     @logibmsg
     def position(self, account, contract, pos, avgCost):
@@ -528,9 +517,8 @@ class IBApi(EWrapper, EClient):
 
     @logibmsg
     def realtimeBar(self, reqId, time, open_, high, low, close, volume, wap, count):
-        self.cb.realtimeBar(
-            RTBar(reqId, time, open_, high, low, close, float(volume), wap, count)
-        )
+        self.cb.realtimeBar(RTBar(reqId, time, open_, high,
+                            low, close, float(volume), wap, count))
 
     @logibmsg
     def historicalData(self, reqId, bar):
@@ -588,15 +576,7 @@ class IBApi(EWrapper, EClient):
     ):
         """returns tick-by-tick data for tickType = "Last" or "AllLast" """
         self.cb.tickByTickAllLast(
-            reqId,
-            tickType,
-            time,
-            price,
-            size,
-            tickAtrribLast,
-            exchange,
-            specialConditions,
-        )
+            reqId, tickType, time, price, size, tickAtrribLast, exchange, specialConditions)
 
     @logibmsg
     def tickByTickBidAsk(
@@ -604,8 +584,7 @@ class IBApi(EWrapper, EClient):
     ):
         """returns tick-by-tick data for tickType = "BidAsk" """
         self.cb.tickByTickBidAsk(
-            reqId, time, bidPrice, askPrice, bidSize, askSize, tickAttribBidAsk
-        )
+            reqId, time, bidPrice, askPrice, bidSize, askSize, tickAttribBidAsk)
 
     @logibmsg
     def tickByTickMidPoint(self, reqId, time, midPoint):
@@ -656,7 +635,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         Set it to a ``-1`` value to keep on reconnecting forever
 
-      - ``timeout`` (default: ``3.0``)
+      - ``connection_timeout`` (default: ``1.0``)
 
         Time in seconds between reconnection attemps
 
@@ -689,27 +668,30 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     DataCls = None  # data class will auto register
 
     params = (
-        ("host", "127.0.0.1"),
-        ("port", 7496),
-        ("clientId", None),  # None generates a random clientid 1 -> 2^16
-        ("broker_host", ""),
-        ("broker_request_port", 12345),
-        ("broker_subscribe_port", 12345),
-        ("broker_user_name", ""),
-        ("broker_password", ""),
-        ("notifyall", False),
-        ("_debug", False),
-        ("reconnect", 3),  # -1 forever, 0 No, > 0 number of retries
-        ("timeout", 3.0),  # timeout between reconnections
-        ("timeoffset", True),  # Use offset to server for timestamps if needed
-        ("timerefresh", 60.0),  # How often to refresh the timeoffset
-        ("indcash", True),  # Treat IND codes as CASH elements
+        ('host', '127.0.0.1'),
+        ('port', 7496),
+        ('clientId', None),  # None generates a random clientid 1 -> 2^16
+        ('broker_host', ''),
+        ('broker_request_port', 12345),
+        ('broker_subscribe_port', 12345),
+        ('broker_user_name', ''),
+        ('broker_password', ''),
+        ('notifyall', False),
+        ('_debug', False),
+        ('reconnect', 3),  # -1 forever, 0 No, > 0 number of retries
+        ('connection_timeout', 1.0),  # timeout between reconnections
+        ('timeout', 15.0),  # timeout on operations
+        ('timeoffset', True),  # Use offset to server for timestamps if needed
+        ('timerefresh', 60.0),  # How often to refresh the timeoffset
+        ('indcash', True),  # Treat IND codes as CASH elements
     )
 
     @classmethod
     def getdata(cls, *args, **kwargs):
-        """Returns ``DataCls`` with args, kwargs"""
-        return cls.DataCls(*args, **kwargs)
+        '''Returns ``DataCls`` with args, kwargs'''
+        res = cls.DataCls(*args, **kwargs)
+        logger.debug(f"Creating data: {args} {kwargs}")
+        return res
 
     @classmethod
     def getbroker(cls, *args, **kwargs):
@@ -719,22 +701,46 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     def __init__(self):
         super(IBStore, self).__init__()
 
+        og_signal_handler = signal.getsignal(signal.SIGINT)
+
+        def signal_handler(sig, frame):
+            logger.info(
+                f"Active threads: {threading.active_count()} (threads = {threading.enumerate()})")
+            logger.warning("SIGNIT! Shutting down EReader thread!")
+            self.dontreconnect = True
+            self._event_disconnect.set()  # signal wakeup from sleep loop
+            self._disconnect()
+            og_signal_handler(sig, frame)
+
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+
+        def except_hook(exctype, value, traceback):
+            if exctype == SystemExit:
+                logger.warning("SystemExit!")
+                self.dontreconnect = True
+                self._disconnect()
+            sys.__excepthook__(exctype, value, traceback)
+        # sys.excepthook = except_hook
+        # threading.excepthook = except_hook
+
         self._lock_q = threading.Lock()  # sync access to _tickerId/Queues
         self._lock_accupd = threading.Lock()  # sync account updates
         self._lock_pos = threading.Lock()  # sync account updates
         self._lock_notif = threading.Lock()  # sync access to notif queue
         self._updacclock = threading.Lock()  # sync account updates
+        self._lock_connect = threading.RLock()  # sync connecting
 
         # Account list received
         self._event_managed_accounts = threading.Event()
         self._event_accdownload = threading.Event()
+        self._event_disconnect = threading.Event()
 
         self.dontreconnect = False  # for non-recoverable connect errors
 
         self._env = None  # reference to cerebro for general notifications
         self.broker = None  # broker instance
         self.datas = list()  # datas that have registered over start
-        self.ccount = 0  # requests to start (from cerebro or datas)
 
         self._lock_tmoffset = threading.Lock()
         self.tmoffset = timedelta()  # to control time difference with server
@@ -743,6 +749,10 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         self.qs = collections.OrderedDict()  # key: tickerId -> queues
         self.ts = collections.OrderedDict()  # key: queue -> tickerId
         self.iscash = dict()  # tickerIds from cash products (for ex: EUR.JPY)
+
+        self._contracts = dict()  # contracts we've looked up
+
+        self.apiThread = None
 
         self.histexreq = dict()  # holds segmented historical requests
         self.histfmt = dict()  # holds datetimeformat for request
@@ -755,7 +765,10 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         self.port_update = False  # indicate whether to signal to broker
 
-        self.positions = collections.defaultdict(Position)  # actual positions
+        self.positions_by_contract = collections.defaultdict(
+            Position)  # actual positions
+        self.positions_by_symbol = collections.defaultdict(
+            Position)  # actual positions
 
         self._tickerId = itertools.count(self.REQIDBASE)  # unique tickerIds
         self.orderid = None  # next possible orderid (will be itertools.count)
@@ -763,6 +776,10 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         self.cdetails = collections.defaultdict(list)  # hold cdetails requests
 
         self.managed_accounts = list()  # received via managedAccounts
+        self._running = True
+        self._connecting = False
+        self._ready = threading.Event()
+        self.reconnects = 0
 
         self.notifs = queue.Queue()  # store notifications for cerebro
 
@@ -776,11 +793,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         # ibpy connection object
         try:
             self.conn = IBApi(self, self._debug)
-            self.conn.connect(self.p.host, self.p.port, self.clientId)
-            self.apiThread = threading.Thread(target=self.conn.run, daemon=True)
-            self.apiThread.start()
+            # self.reconnect()
         except Exception as e:
-            print(f"TWS Failed to connect: {e}")
+            logger.error(f"TWS Failed to connect: {e}")
 
         # This utility key function transforms a barsize into a:
         #   (Timeframe, Compression) tuple which can be sorted
@@ -811,8 +826,11 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         for barsize in self.revdur:
             self.revdur[barsize].sort(key=key2fn)
 
+    @logibmsg
     def start(self, data=None, broker=None):
-        logger.info(f"START data: {data} broker: {broker}")
+        logger.debug(f"START data: {data} broker: {broker}")
+        if self.broker is None:
+            self.broker = broker
         self.reconnect(fromstart=True)  # reconnect should be an invariant
 
         # Datas require some processing to kickstart data reception
@@ -830,18 +848,27 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             # datas to try to reconnect or else bail out
             return self.getTickerQueue(start=True)
 
-        elif broker is not None:
-            self.broker = broker
-
     def stop(self):
-        try:
-            self.conn.disconnect()  # disconnect should be an invariant
-        except AttributeError:
-            pass  # conn may have never been connected and lack "disconnect"
+        self._running = False
+        self.dontreconnect = True
+        self._disconnect()
 
         # Unblock any calls set on these events
         self._event_managed_accounts.set()
         self._event_accdownload.set()
+
+    def _await_ready(self):
+        self._ready.wait(self.p.timeout)
+        if not self._ready.is_set():
+            raise TimeoutError("Timeout waiting for broker ready!")
+
+    def _disconnect(self):
+        with self._lock_connect:
+            try:
+                self.conn.disconnect()  # disconnect should be an invariant
+            except AttributeError:
+                pass    # conn may have never been connected and lack "disconnect"
+            self._ready.clear()
 
     # @logibmsg
     def connected(self):
@@ -858,68 +885,89 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
     # @logibmsg
     def reconnect(self, fromstart=False, resub=False):
-        # This method must be an invariant in that it can be called several
-        # times from the same source and must be consistent. An exampler would
-        # be 5 datas which are being received simultaneously and all request a
-        # reconnect
-
-        # Policy:
-        #  - if dontreconnect has been set, no option to connect is possible
-        #  - check connection and use the absence of isConnected as signal of
-        #    first ever connection (add 1 to retries too)
-        #  - Calculate the retries (forever or not)
-        #  - Try to connct
-        #  - If achieved and fromstart is false, the datas will be
-        #    re-kickstarted to recreate the subscription
-        firstconnect = False
-        try:
-            if self.conn.isConnected():
-                if resub:
-                    self.startdatas()
-                return True  # nothing to do
-        except AttributeError:
-            # Not connected, several __getattr__ indirections to
-            # self.conn.sender.client.isConnected
-            firstconnect = True
-
-        if self.dontreconnect:
-            return False
-
-        # This is only invoked from the main thread by datas and therefore no
-        # lock is needed to control synchronicity to it
-        retries = self.p.reconnect
-        if retries >= 0:
-            retries += firstconnect
-
-        while retries < 0 or retries:
-            logger.debug(f"Retries: {retries}")
-            if not firstconnect:
-                logger.debug(f"Reconnect in {self.p.timeout} secs")
-                time.sleep(self.p.timeout)
-
+        with self._lock_connect:
             firstconnect = False
-
+            if self._connecting:
+                return False
             try:
-                logger.debug(
-                    (
-                        f"Connect (host={self.p.host}, "
-                        f"port={self.p.port}, "
-                        f"clientId={self.clientId})"
-                    )
-                )
-                if self.conn.connect(self.p.host, self.p.port, self.clientId):
-                    if not fromstart or resub:
+                if self.conn.isConnected():
+                    if resub:
                         self.startdatas()
-                    return True  # connection successful
-            except Exception as e:
-                logger.exception(f"Failed to Connect {e}")
+                    return True  # nothing to do
+            except AttributeError:
+                # Not connected, several __getattr__ indirections to
+                # self.conn.sender.client.isConnected
+                firstconnect = True
+
+            if self.dontreconnect:
                 return False
 
-            if retries > 0:
-                retries -= 1
+            # This is only invoked from the main thread by datas and therefore no
+            # lock is needed to control synchronicity to it
+            retries = 0
+            if self.reconnects > 0:
+                logger.info(f"Reconnecting... reconnects: {self.reconnects}")
+            else:
+                firstconnect = True
+                logger.info(f"Connecting...")
+            while not self.conn.isConnected() and retries < self.p.reconnect or self.p.reconnect == -1:
+                self._connecting = True
+                if not firstconnect and retries > 0:
+                    timeout = self.p.connection_timeout * retries
+                    logger.info(
+                        f"Retrying in {timeout} secs (retries: {retries})")
+                    self._event_disconnect.wait(timeout)
 
-        self.dontreconnect = True
-        return False  # connection/reconnection failed
+                firstconnect = False
+                try:
+                    self._event_managed_accounts.clear()
+                    self._event_accdownload.clear()
+                    self.conn.connect(self.p.host, self.p.port, self.clientId)
+                    if self.conn.isConnected():
+                        logger.info(
+                            f"Connected to (host={self.p.host}, port={self.p.port}, clientId={self.clientId})")
+                        self.apiThread = threading.Thread(
+                            target=self.conn.run, name=f"IBKR api - {self.reconnects}", daemon=True)
+                        self.apiThread.start()
+                        logger.debug(
+                            f"Active threads: {threading.active_count()} (threads = {threading.enumerate()})")
+
+                        # self.conn.reqManagedAccts()
+                        attempts = 0
+                        while attempts < 10 and self.conn.isConnected() and not self._event_managed_accounts.is_set() and len(self.managed_accounts) == 0:
+                            logger.debug("Waiting for account info...")
+                            self._event_managed_accounts.wait(
+                                timeout=0.5 * attempts)
+                            attempts += 1
+
+                        if len(self.managed_accounts) > 0:
+                            logger.debug(
+                                f"Managed accounts: {self.managed_accounts}")
+                            account = self.managed_accounts[0]
+                            logger.debug(
+                                f"Requesting account updates for: {account}")
+                            while not self._event_accdownload.is_set() and self.conn.isConnected():
+                                self.conn.reqAccountUpdates(True, account)
+                                logger.debug("Waiting for account download...")
+                                self._event_accdownload.wait(timeout=0.5)
+
+                            self._ready.set()
+                        else:
+                            self._disconnect()
+                    self._connecting = False
+
+                except Exception as e:
+                    logger.exception(f"Failed to Connect {e}")
+
+                retries += 1
+
+            if not fromstart or resub:
+                self.startdatas()
+
+            if not self.conn.isConnected and retries >= self.p.reconnect:
+                raise RuntimeError("Unable to connected to IB!")
+            self.reconnects += 1
+            return self.conn.isConnected()
 
     def startdatas(self):
         # kickstrat datas, not returning until all of them have been done
@@ -977,17 +1025,14 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         # All errors are logged to the environment (cerebro), because many
         # errors in Interactive Brokers are actually informational and many may
         # actually be of interest to the user
-        if msg.reqId > 0:
+        if msg.reqId != 0:
             logger.error(f"{msg}")
-            print(f"Error: {msg}")
         else:
-            logger.debug(f"{msg}")
-
-        if msg.reqId == -1 and msg.errorCode == 502:
-            print(msg.errorString)
+            logger.warn(f"{msg}")
 
         if not self.p.notifyall:
-            self.notifs.put((msg, tuple(vars(msg).values()), dict(vars(msg).items())))
+            self.notifs.put(
+                (msg, tuple(vars(msg).values()), dict(vars(msg).items())))
 
         # Manage those events which have to do with connection
         if msg.errorCode is None:
@@ -1027,14 +1072,16 @@ class IBStore(with_metaclass(MetaSingleton, object)):
                 q.put(-msg.errorCode)
 
         elif msg.errorCode == 326:  # not recoverable, clientId in use
-            self.dontreconnect = True
-            self.conn.disconnect()
             self.stopdatas()
+            self.dontreconnect = True
+            self._disconnect()
 
         elif msg.errorCode == 502:
             # Cannot connect to TWS: port, config not open, tws off (504 then)
-            self.conn.disconnect()
-            self.stopdatas()
+            if not self._connecting and self._running:
+                self.stopdatas()
+                self._disconnect()
+                self.reconnect()
 
         elif msg.errorCode == 504:  # Not Connected for data op
             # Once for each data
@@ -1044,11 +1091,14 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             # with no messages arriving
             for q in self.ts:  # key: queue -> ticker
                 q.put(-msg.errorCode)
+            if not self._connecting and self._running:
+                self._disconnect()
+                self.reconnect()
 
         elif msg.errorCode == 1300:
             # TWS has been closed. The port for a new connection is there
             # newport = int(msg.errorMsg.split('-')[-1])  # bla bla bla -7496
-            self.conn.disconnect()
+            self._disconnect()
             self.stopdatas()
 
         elif msg.errorCode == 1100:
@@ -1082,19 +1132,25 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     def connectionClosed(self):
         # Sometmes this comes without 1300/502 or any other and will not be
         # seen in error hence the need to manage the situation independently
-        if self.connected():
-            self.conn.disconnect()
-            self.stopdatas()
+        logger.warn("Connection closed!")
+        if not self._connecting and self._running:
+            self.reconnect()
 
     def updateAccountTime(self, timeStamp):
         logger.debug(f"timeStamp: {timeStamp}")
 
+    @logibmsg
     def connectAck(self):
-        logger.debug(f"connectAck")
+        logger.debug(f"connectAck: isConnected={self.conn.isConnected()}")
+        # with self._lock_accupd:
+        #    if not self.managed_accounts:
+        #        self.conn.reqManagedAccts()
 
     def managedAccounts(self, accountsList):
         # 1st message in the stream
-        self.managed_accounts = accountsList.split(",")
+        self.managed_accounts = accountsList.split(',')
+        logger.debug(
+            f"Received managed accounts list: {self.managed_accounts}")
         self._event_managed_accounts.set()
 
         # Request time to avoid synchronization issues
@@ -1191,6 +1247,25 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         return cds
 
+    def get_contract(self, data):
+        res = None
+        logger.debug(f"get_contract({data._name})")
+        if data._name in self._contracts:
+            res = self._contracts[data._name]
+        else:
+            if hasattr(data, "tradecontract"):
+                res = data.tradecontract
+            else:
+                ib_data = self.getdata(
+                    dataname=data._name,
+                    currency="USD",  # TODO: allow configuration/default?
+                )
+                ib_data._populate_contract()
+                res = ib_data.tradecontract
+            self._contracts[data._name] = res
+        logger.debug(f"get_contract({data._name}) = {res}")
+        return res
+
     def reqContractDetails(self, contract):
         # get a ticker/queue for identification/data delivery
         tickerId, q = self.getTickerQueue()
@@ -1198,8 +1273,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         return q
 
     def contractDetailsEnd(self, reqId):
-        """Signal end of contractdetails"""
-        logger.debug(f"Cancel data queue tickerId: {reqId} Q: {self.qs[reqId]}")
+        '''Signal end of contractdetails'''
+        logger.debug(
+            f"Cancel data queue tickerId: {reqId} Q: {self.qs[reqId]}")
         self.cancelQueue(self.qs[reqId], True)
 
     def contractDetails(self, reqId, contractDetails):
@@ -1324,7 +1400,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             tickerId,
             contract,
             # bytes(intdate.strftime('%Y%m%d %H:%M:%S') + ' GMT'),
-            bytes(intdate.strftime("%Y%m%d-%H:%M:%S")),
+            bytes(intdate.strftime('%Y%m%d-%H:%M:%S')),
             bytes(duration),
             bytes(barsize),
             bytes(what),
@@ -1336,18 +1412,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         return q
 
-    def reqHistoricalData(
-        self,
-        contract,
-        enddate,
-        duration,
-        barsize,
-        what=None,
-        useRTH=False,
-        tz="",
-        sessionend=None,
-    ):
-        """Proxy to reqHistorical Data"""
+    def reqHistoricalData(self, contract, enddate, duration, barsize,
+                          what=None, useRTH=False, tz='', sessionend=None):
+        '''Proxy to reqHistorical Data'''
 
         # get a ticker/queue for identification/data delivery
         tickerId, q = self.getTickerQueue()
@@ -1383,17 +1450,10 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         return q
 
-    def reqHistoricalTicksEx(
-        self,
-        contract,
-        enddate=None,
-        begindate=None,
-        what=None,
-        useRTH=False,
-        tz="",
-        tickerId=None,
-    ):
-        """
+    def reqHistoricalTicksEx(self, contract, enddate=None, begindate=None,
+                             what=None, useRTH=False, tz='',
+                             tickerId=None):
+        '''
         Extension of the raw reqHistoricalData proxy, which takes two dates
         rather than a duration, barsize and date
 
@@ -1450,10 +1510,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         return q
 
-    def reqHistoricalTicks(
-        self, contract, enddate, begindate, what=None, useRTH=False, tz=""
-    ):
-        """Proxy to reqHistoricalTicks"""
+    def reqHistoricalTicks(self, contract, enddate, begindate,
+                           what=None, useRTH=False, tz=''):
+        '''Proxy to reqHistoricalTicks'''
 
         # get a ticker/queue for identification/data delivery
         tickerId, q = self.getTickerQueue()
@@ -1507,7 +1566,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
     @logibmsg
     def reqRealTimeBars(self, contract, useRTH=False, duration=5, what=None):
-        """Creates a request for (5 seconds) Real Time Bars
+        '''Creates a request for (5 seconds) Real Time Bars
 
         Params:
           - contract: a ib.ext.Contract.Contract intance
@@ -1570,14 +1629,15 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         # q.put(None)  # to kickstart backfilling
         # Can request 233 also for cash ... nothing will arrive
-        self.conn.reqMktData(tickerId, contract, bytes(ticks), False, False, [])
+        self.conn.reqMktData(tickerId, contract,
+                             bytes(ticks), False, False, [])
         return q
 
     def reqTickByTickData(self, contract, what=None, ignoreSize=True):
         """
         Tick-by-tick data corresponding to the data shown in the
         TWS Time & Sales Window is available starting with TWS v969 and API v973.04.
-        """
+        '''
 
         if what == "TRADES":
             what = "Last"
@@ -1765,9 +1825,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         self, reqId, time, bidPrice, askPrice, bidSize, askSize, tickAttribBidAsk
     ):
         tickerId = reqId
-        tick = RTTickBidAsk(
-            time, bidPrice, askPrice, bidSize, askSize, tickAttribBidAsk
-        )
+        tick = RTTickBidAsk(time, bidPrice, askPrice,
+                            bidSize, askSize, tickAttribBidAsk)
         self.qs[tickerId].put(tick)
 
     def tickByTickAllLast(
@@ -1782,9 +1841,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         specialConditions,
     ):
         tickerId = reqId
-        tick = RTTickLast(
-            tickType, time, price, size, tickAtrribLast, exchange, specialConditions
-        )
+        tick = RTTickLast(tickType, time, price, size,
+                          tickAtrribLast, exchange, specialConditions)
         self.qs[tickerId].put(tick)
 
     def tickByTickMidPoint(self, reqId, time, midPoint):
@@ -2296,20 +2354,10 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         return "1 Y"  # to keep the table clean
 
-    def makecontract(
-        self,
-        symbol,
-        sectype,
-        exch,
-        curr,
-        expiry="",
-        strike=0.0,
-        right="",
-        mult=1,
-        primaryExch=None,
-        localSymbol=None,
-    ):
-        """returns a contract from the parameters without check"""
+    def makecontract(self, symbol, sectype, exch, curr,
+                     expiry='', strike=0.0, right='', mult=1,
+                     primaryExch=None, localSymbol=None):
+        '''returns a contract from the parameters without check'''
 
         contract = Contract()
 
@@ -2334,8 +2382,8 @@ class IBStore(with_metaclass(MetaSingleton, object)):
         return contract
 
     def cancelOrder(self, orderid):
-        """Proxy to cancelOrder"""
-        self.conn.cancelOrder(orderid)
+        '''Proxy to cancelOrder'''
+        self.conn.cancelOrder(orderid, "")
 
     def placeOrder(self, orderid, contract, order):
         """Proxy to placeOrder"""
@@ -2375,20 +2423,19 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             try:
                 if not self._event_accdownload.is_set():  # 1st event seen
                     position = Position(float(pos), float(avgCost))
-                    self.positions[contract.conId] = position
-                    logger.debug(
-                        f"POSITIONS INITIAL: {contract.symbol}={pprint.pformat(position)}"
-                    )
+                    self.positions_by_contract[contract.conId] = position
+                    self.positions_by_symbol[contract.symbol] = position
+                    logger.info(
+                        f"Initial position: {contract.symbol}:{contract.conId}={position}")
                 else:
-                    position = self.positions[contract.conId]
-                    logger.debug(f"POSITION UPDATE: {contract.symbol}={position}")
+                    position = self.positions_by_contract[contract.conId]
+                    logger.debug(
+                        f"Position update: {contract.symbol}:{contract.conId}={position}")
                     if not position.fix(float(pos), avgCost):
-                        err = (
-                            "The current calculated position and "
-                            "the position reported by the broker do not match. "
-                            "Operation can continue, but the trades "
-                            "calculated in the strategy may be wrong"
-                        )
+                        err = ('The current calculated position and '
+                               'the position reported by the broker do not match. '
+                               'Operation can continue, but the trades '
+                               'calculated in the strategy may be wrong')
 
                         self.notifs.put((err, (), {}))
 
@@ -2399,21 +2446,9 @@ class IBStore(with_metaclass(MetaSingleton, object)):
     def positionEnd(self):
         logger.debug(f"positionEnd")
 
-    def reqAccountUpdates(self, subscribe=True, account=None):
-        """Proxy to reqAccountUpdates
-
-        If ``account`` is ``None``, wait for the ``managedAccounts`` message to
-        set the account codes
-        """
-        if account is None:
-            self._event_managed_accounts.wait()
-            account = self.managed_accounts[0]
-
-        self.conn.reqAccountUpdates(subscribe, bytes(account))
-
     def reqOpenOrders(self):
-        """Proxy to reqOpenOrders"""
-
+        '''Proxy to reqOpenOrders
+        '''
         self.conn.reqOpenOrders()
 
     def accountDownloadEnd(self, accountName):
@@ -2427,49 +2462,21 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
                 self.port_update = False
 
-    def updatePortfolio(
-        self,
-        contract,
-        pos,
-        marketPrice,
-        marketValue,
-        averageCost,
-        unrealizedPNL,
-        realizedPNL,
-        accountName,
-    ):
-        # Lock access to the position dicts. This is called in sub-thread and
-        # can kick in at any time
-        with self._lock_pos:
-            try:
-                if not self._event_accdownload.is_set():  # 1st event seen
-                    position = Position(float(pos), float(averageCost))
-                    self.positions[contract.conId] = position
-                    logger.debug(f"POSITIONS INITIAL: {contract.symbol}={position}")
-                else:
-                    position = self.positions[contract.conId]
-                    logger.debug(f"POSITION UPDATE: {contract.symbol}={position}")
-                    if not position.fix(float(pos), averageCost):
-                        err = (
-                            "The current calculated position and "
-                            "the position reported by the broker do not match. "
-                            "Operation can continue, but the trades "
-                            "calculated in the strategy may be wrong"
-                        )
+    def updatePortfolio(self, contract, pos,
+                        marketPrice, marketValue,
+                        averageCost, unrealizedPNL,
+                        realizedPNL, accountName):
+        self.position(None, contract, pos, averageCost)
+        self.broker.push_portupdate()
 
-                        self.notifs.put((err, (), {}))
-
-                    # Flag signal to broker at the end of account download
-                    # self.port_update = True
-                    self.broker.push_portupdate()
-            except Exception as e:
-                logger.exception(f"Exception: {e}")
-
-    def getposition(self, contract, clone=False):
+    def getposition(self, contractOrSymbol, clone=False):
         # Lock access to the position dicts. This is called from main thread
         # and updates could be happening in the background
         with self._lock_pos:
-            position = self.positions[contract.conId]
+            if hasattr(contractOrSymbol, "conId"):
+                position = self.positions_by_contract[contractOrSymbol.conId]
+            else:
+                position = self.positions_by_symbol[contractOrSymbol]
             if clone:
                 return copy(position)
 
@@ -2503,18 +2510,11 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         If account is specified or the system has only 1 account the dictionary
         corresponding to that account is returned
-        """
-        # Wait for at least 1 account update download to have been finished
-        # before the account infos can be returned to the calling client
-        # if self.connected():
-        #     self._event_accdownload.wait()
+        '''
+        self._await_ready()
         # Lock access to acc_cash to avoid an event intefering
         with self._updacclock:
             if account is None:
-                # wait for the managedAccount Messages
-                # if self.connected():
-                #     self._event_managed_accounts.wait()
-
                 if not self.managed_accounts:
                     return self.acc_upds.copy()
 
@@ -2541,15 +2541,12 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         If account is specified or the system has only 1 account the dictionary
         corresponding to that account is returned
-        """
-        # Wait for at least 1 account update download to have been finished
-        # before the value can be returned to the calling client
-        # Lock access to acc_cash to avoid an event intefering
-
+        '''
+        self._await_ready()
         with self._updacclock:
             if account is None:
                 if not self.managed_accounts:
-                    return float()
+                    return float('nan')
                 elif len(self.managed_accounts) > 1:
                     return sum(self.acc_value.values())
 
@@ -2561,7 +2558,7 @@ class IBStore(with_metaclass(MetaSingleton, object)):
             except KeyError:
                 pass
 
-        return float()
+            return float('nan')
 
     @logibmsg
     def get_acc_cash(self, account=None):
@@ -2573,28 +2570,22 @@ class IBStore(with_metaclass(MetaSingleton, object)):
 
         If account is specified or the system has only 1 account the dictionary
         corresponding to that account is returned
-        """
-        # Wait for at least 1 account update download to have been finished
-        # before the cash can be returned to the calling client
-        # if self.connected():
-        #     self._event_accdownload.wait()
+        '''
+        self._await_ready()
         # Lock access to acc_cash to avoid an event intefering
         with self._lock_accupd:
             if account is None:
-                # # wait for the managedAccount Messages
-                # if self.connected():
-                #     self._event_managed_accounts.wait()
-
-                if not self.managed_accounts:
-                    return float()
+                if len(self.managed_accounts) == 0:
+                    return float('nan')
 
                 elif len(self.managed_accounts) > 1:
                     return sum(self.acc_cash.values())
 
                 # Only 1 account, fall through to return only 1
                 account = self.managed_accounts[0]
-
             try:
                 return self.acc_cash[account]
             except KeyError:
                 pass
+
+            return float('nan')
