@@ -603,12 +603,33 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
     def push_commissionreport(self, cr):
         with self._lock_orders:
             try:
+                logger.debug(f"Got commission report: {cr}")
                 ex = self.executions.pop(cr.execId)
+                if ex is None:
+                    # raise Exception?
+                    logger.error(
+                        f"Could not find execution for: {cr.execId} (cr: {cr})"
+                    )
+                    return
                 oid = ex.orderId
                 order = self.orderbyid[oid]
+                if order is None:
+                    # raise Exception?
+                    logger.error(f"Could not find order for: {oid} (cr: {cr})")
+                    return
                 ostatus = self.ordstatus[oid].pop(ex.cumQty)
+                if ostatus is None:
+                    # raise Exception?
+                    logger.error(
+                        f"Could not find order status for: {oid} (qty: {ex.cumQty}, cr: {cr})"
+                    )
+                    return
 
                 position = self.getposition(order.data, clone=False)
+                if position is None:
+                    # raise Exception?
+                    logger.error(f"No position for {order.data}")
+                    return
                 pprice_orig = position.price
                 size = ex.shares if ex.side[0] == "B" else -ex.shares
                 price = ex.price
@@ -621,8 +642,13 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
                 openedcomm = comm - closedcomm
 
                 comminfo = order.comminfo
-                closedvalue = comminfo.getoperationcost(closed, pprice_orig)
-                openedvalue = comminfo.getoperationcost(opened, price)
+                if comminfo:
+                    closedvalue = comminfo.getoperationcost(closed, pprice_orig)
+                    openedvalue = comminfo.getoperationcost(opened, price)
+                else:
+                    logger.warn(f"Order {order} missing commission info!")
+                    closedvalue = 0  # ???
+                    openedvalue = 0
 
                 # default in m_pnl is MAXFLOAT
                 pnl = cr.realizedPNL if closed else 0.0
@@ -670,7 +696,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
                 if oid not in self.tonotify:  # Lock needed
                     self.tonotify.append(oid)
             except Exception as e:
-                logger.exception(f"Exception: {e}")
+                logger.exception(f"Exception handling commision report: {e}")
 
     def push_portupdate(self):
         # If the IBStore receives a Portfolio update, then this method will be
