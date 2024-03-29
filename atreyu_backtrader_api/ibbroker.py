@@ -355,7 +355,7 @@ class IBBroker(with_metaclass(MetaIBBroker, BrokerBase)):
     def getcash(self):
         # This call cannot block if no answer is available from ib
         self.cash = self.ib.get_acc_cash()
-        # logger.debug(f"get_acc_cash: {self.cash}")
+        logger.debug(f"get_acc_cash: {self.cash}")
         return self.cash
 
     def getvalue(self, datas=None):
